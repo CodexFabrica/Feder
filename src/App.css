@@ -1,0 +1,188 @@
+/* Loading Overlay */
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(2px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    color: white;
+    font-weight: 600;
+    font-size: 1.2rem;
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: white;
+    animation: spin 1s ease-in-out infinite;
+    margin-right: 12px;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Header Styles */
+.header-project-input {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-primary);
+    font-size: 1rem;
+    font-weight: 600;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.2s;
+    width: 200px;
+}
+
+.header-project-input:hover,
+.header-project-input:focus {
+    background: var(--bg-panel);
+    border-color: var(--border-color);
+}
+
+.header-mode-switch {
+    display: flex;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-color);
+    /* Added border to pill container */
+    border-radius: 16px;
+    /* Pill shape */
+    padding: 2px;
+    gap: 2px;
+}
+
+.mode-pill {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    padding: 4px 12px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    border-radius: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.mode-pill:hover {
+    color: var(--text-primary);
+}
+
+.mode-pill.active {
+    background: var(--bg-app);
+    /* Or accent color depending on theme, keep clean */
+    color: var(--accent-color);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+/* Dark mode tweaks for header */
+.dark .mode-pill.active {
+    background: var(--bg-hover);
+}
+
+/* Research Paper Preview Mode */
+.panel-preview.research-mode {
+    background-color: white;
+    /* Often preferable for reading layout */
+    color: #333;
+}
+
+.dark .panel-preview.research-mode {
+    background-color: #1e1e1e;
+    color: #e0e0e0;
+}
+
+/* Add this to your HTML <head> or at the top of your CSS file */
+@import url('https://cdn.jsdelivr.net/npm/@fontsource/latin-modern-roman@5.0.0/index.css');
+
+.preview-content.paper-layout {
+    /* Primary font: Latin Modern Roman */
+    font-family: "Latin Modern Roman", "Crimson Pro", "EB Garamond", "Times New Roman", serif;
+    font-size: 11pt;
+    /* LaTeX default is usually 10pt or 11pt */
+    line-height: 1.5;
+    /* LaTeX line spacing is tighter than 1.8 by default */
+    max-width: 850px;
+    margin: 0 auto;
+    padding: 1in;
+    /* Professional documents usually use inch-based margins */
+
+    /* Text rendering improvements */
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+
+    /* Justification and Hyphenation */
+    text-align: justify;
+    hyphens: auto;
+}
+
+.preview-title.paper-title {
+    text-align: center;
+    font-size: 2.2rem;
+    font-weight: bold;
+    margin-bottom: 2rem;
+    line-height: 1.2;
+}
+
+.paper-authors-block {
+    text-align: center;
+    margin-bottom: 3rem;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 2rem;
+}
+
+.paper-author-entry {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.paper-author-name {
+    font-weight: bold;
+    font-size: 1.1rem;
+}
+
+.paper-author-aff {
+    font-style: italic;
+    font-size: 0.95rem;
+    color: #666;
+    margin-top: 2px;
+}
+
+.dark .paper-author-aff {
+    color: #aaa;
+}
+
+.paper-author-email {
+    font-family: monospace;
+    font-size: 0.85rem;
+    color: #888;
+    margin-top: 2px;
+}
+
+.preview-abstract {
+    margin: 2rem 4rem;
+    font-size: 0.95rem;
+    text-align: justify;
+}
+
+.preview-abstract-label {
+    display: block;
+    text-align: center;
+    font-weight: bold;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+    margin-bottom: 0.5rem;
+}
