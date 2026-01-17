@@ -104,7 +104,6 @@ export function WelcomeScreen({ onNewProject, onOpenProject, recentProjects, onO
                 alignItems: 'center',
                 justifyContent: 'center',
                 padding: 40,
-                padding: 40,
                 overflowY: 'auto',
                 position: 'relative'
             }}>
