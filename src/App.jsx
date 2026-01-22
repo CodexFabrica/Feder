@@ -144,6 +144,12 @@ function App() {
       return;
     }
 
+    if (window.electronAPI && window.electronAPI.isElectron && !activeHandle.path) {
+      const reLink = window.confirm(`Unable to locate '${project.name}' automatically. Would you like to select the folder again?`);
+      if (reLink) handleOpen();
+      return;
+    }
+
     // AUTOSAVE BEFORE SWITCHING
     if (isDirty) await handleSave();
 
@@ -451,10 +457,7 @@ function App() {
         setIsDirty(false);
       } else if (mode === 'researcher' && !isSilent) {
         // Saving a NEW Research Project - only if NOT silent
-        const dir = await window.showDirectoryPicker({
-          id: 'feder-projects',
-          mode: 'readwrite'
-        });
+        const dir = await openDirectory();
 
         await writeFileInDir(dir, 'project_metadata.json', JSON.stringify({ name: projectMetadata.name, mode: 'researcher' }, null, 2));
 
