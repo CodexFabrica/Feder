@@ -4,7 +4,7 @@ import { FolderOpen, FilePlus, BookOpen, PenTool, Feather, Settings, X, Sun, Moo
 export function WelcomeScreen({ onNewProject, onOpenProject, recentProjects, onOpenRecent, theme, toggleTheme, settings, onUpdateSettings, onRemoveRecent, isElectron }) {
     const [newItemName, setNewItemName] = useState('');
     const [newItemMode, setNewItemMode] = useState('journalist');
-    const [useTemplate, setUseTemplate] = useState(true);
+    const [initializeEmpty, setInitializeEmpty] = useState(false);
     const [showAllRecents, setShowAllRecents] = useState(false);
     const [showUserSettings, setShowUserSettings] = useState(false);
 
@@ -131,7 +131,7 @@ export function WelcomeScreen({ onNewProject, onOpenProject, recentProjects, onO
                                             style={removeRecentBtnStyle}
                                             title="Remove"
                                         >
-                                            <Trash2 size={14} />
+                                            <X size={16} />
                                         </button>
                                     </div>
                                 ))}
@@ -230,23 +230,23 @@ export function WelcomeScreen({ onNewProject, onOpenProject, recentProjects, onO
                         }}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                                    <span style={{ fontSize: '1rem', fontWeight: 700 }}>Initialize with Template</span>
+                                    <span style={{ fontSize: '1rem', fontWeight: 700 }}>Initialize Empty</span>
                                     <label className="switch">
                                         <input
                                             type="checkbox"
-                                            checked={useTemplate}
-                                            onChange={(e) => setUseTemplate(e.target.checked)}
+                                            checked={initializeEmpty}
+                                            onChange={(e) => setInitializeEmpty(e.target.checked)}
                                         />
                                         <span className="slider"></span>
                                     </label>
                                 </div>
                                 <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                    {useTemplate ? 'Standard structure and assets will be generated' : 'Create an empty root folder'}
+                                    {initializeEmpty ? 'Create only project_metadata.json and main.md' : 'Standard folders, notes, and draft files will be generated'}
                                 </span>
                             </div>
 
                             <button
-                                onClick={() => onNewProject(newItemName, newItemMode, useTemplate)}
+                                onClick={() => onNewProject(newItemName, newItemMode, initializeEmpty)}
                                 className="btn-primary-premium"
                                 style={{
                                     ...btnPrimaryPremiumStyle,
@@ -399,7 +399,7 @@ export function WelcomeScreen({ onNewProject, onOpenProject, recentProjects, onO
 
                 .btn-recent-premium {
                     width: 100%;
-                    padding: 16px 20px;
+                    padding: 16px 48px 16px 20px;
                     background: var(--bg-panel);
                     border: 1px solid var(--border-color);
                     border-radius: 14px;
@@ -415,7 +415,12 @@ export function WelcomeScreen({ onNewProject, onOpenProject, recentProjects, onO
                 }
 
                 .recent-item-wrapper:hover .remove-recent-btn {
-                    opacity: 1;
+                    opacity: 1 !important;
+                }
+                .remove-recent-btn:hover {
+                    background: rgba(255, 71, 87, 0.15) !important;
+                    color: #ff4757 !important;
+                    transform: translateY(-50%) scale(1.1) !important;
                 }
             `}</style>
         </div>
@@ -525,13 +530,13 @@ const btnSecondaryPremiumStyle = {
 
 const removeRecentBtnStyle = {
     position: 'absolute',
-    right: 12,
+    right: 16,
     top: '50%',
     transform: 'translateY(-50%)',
-    background: 'rgba(255, 71, 87, 0.1)',
-    color: '#ff4757',
+    background: 'none',
+    color: 'var(--text-secondary)',
     border: 'none',
-    borderRadius: '8px',
+    borderRadius: '50%',
     width: '28px',
     height: '28px',
     display: 'flex',

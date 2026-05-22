@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Monitor, AlignJustify, FolderOpen, Book } from 'lucide-react';
+import { X, Monitor, AlignJustify, FolderOpen } from 'lucide-react';
 
 export function SettingsModal({ onClose, metadata, onUpdate, mode, settings, onUpdateSettings }) {
     const [localMeta, setLocalMeta] = useState(metadata || {});
@@ -83,10 +83,26 @@ export function SettingsModal({ onClose, metadata, onUpdate, mode, settings, onU
                                     > On Save </button>
                                 </div>
                             </div>
+                            {/* Collapsible Sections */}
+                            <div className="setting-row" style={{ marginTop: 16 }}>
+                                <div className="setting-info">
+                                    <span className="setting-name">Collapsible Sections</span>
+                                    <span className="setting-desc">Allow collapsing main sections (H1) in preview</span>
+                                </div>
+                                <label className="switch">
+                                    <input
+                                        type="checkbox"
+                                        checked={localMeta.collapsibleSections ?? false}
+                                        onChange={(e) => handleChange('collapsibleSections', e.target.checked)}
+                                    />
+                                    <span className="slider round"></span>
+                                </label>
+                            </div>
                         </div>
                     </div>
 
                     {/* section: AI Assist */}
+
                     <div className="settings-section">
                         <div className="section-label">
                             <AlignJustify size={16} />
@@ -425,68 +441,28 @@ export function SettingsModal({ onClose, metadata, onUpdate, mode, settings, onU
                     </div>
 
                     {mode === 'researcher' && (
-                        <>
-                            {/* section: Appearance */}
-                            <div className="settings-section">
-                                <div className="section-label">
-                                    <AlignJustify size={16} />
-                                    <span>Appearance</span>
-                                </div>
-                                <div className="settings-card">
-                                    <div className="setting-row">
-                                        <div className="setting-info">
-                                            <span className="setting-name">Caption Alignment</span>
-                                            <span className="setting-desc">Default alignment for figure captions</span>
-                                        </div>
-                                        <div className="segmented-control">
-                                            <button
-                                                className={localMeta.captionAlignment === 'center' || !localMeta.captionAlignment ? 'active' : ''}
-                                                onClick={() => handleChange('captionAlignment', 'center')}
-                                            > Center </button>
-                                            <button
-                                                className={localMeta.captionAlignment === 'justify' ? 'active' : ''}
-                                                onClick={() => handleChange('captionAlignment', 'justify')}
-                                            > Justify </button>
-                                        </div>
+                        <div className="settings-section">
+                            <div className="section-label">
+                                <FolderOpen size={16} />
+                                <span>File Structures</span>
+                            </div>
+                            <div className="settings-card">
+                                <div className="setting-input-group">
+                                    <label>Figures Folder</label>
+                                    <div className="input-with-icon">
+                                        <FolderOpen size={14} className="input-icon" />
+                                        <input
+                                            type="text"
+                                            value={localMeta.figuresFolder !== undefined ? localMeta.figuresFolder : 'figures'}
+                                            onChange={e => handleChange('figuresFolder', e.target.value)}
+                                            placeholder="figures"
+                                        />
                                     </div>
                                 </div>
                             </div>
-
-                            {/* section: Paths */}
-                            <div className="settings-section">
-                                <div className="section-label">
-                                    <FolderOpen size={16} />
-                                    <span>File Structures</span>
-                                </div>
-                                <div className="settings-card">
-                                    <div className="setting-input-group">
-                                        <label>Figures Folder</label>
-                                        <div className="input-with-icon">
-                                            <FolderOpen size={14} className="input-icon" />
-                                            <input
-                                                type="text"
-                                                value={localMeta.figuresFolder !== undefined ? localMeta.figuresFolder : 'figures'}
-                                                onChange={e => handleChange('figuresFolder', e.target.value)}
-                                                placeholder="figures"
-                                            />
-                                        </div>
-                                    </div>
-                                    <div className="setting-input-group" style={{ marginTop: 12 }}>
-                                        <label>Bibliography File</label>
-                                        <div className="input-with-icon">
-                                            <Book size={14} className="input-icon" />
-                                            <input
-                                                type="text"
-                                                value={localMeta.bibFile !== undefined ? localMeta.bibFile : 'references.bib'}
-                                                onChange={e => handleChange('bibFile', e.target.value)}
-                                                placeholder="references.bib"
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </>
+                        </div>
                     )}
+
                 </div>
 
                 <footer className="modal-footer">

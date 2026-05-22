@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
-import { Bold, Italic, Underline, Heading1, Heading2, Image, Link, List, Quote, Code, ImagePlus, Sparkles, MessageSquare, BookMarked } from 'lucide-react';
+import { Bold, Italic, Underline, Heading1, Heading2, Image, Link, List, Quote, Code, ImagePlus, Sparkles, MessageSquare, BookMarked, Sigma, Table, ChevronDown, BookOpen, X } from 'lucide-react';
 import { requestInlineSuggestion } from '../utils/aiSuggestions';
 
 export function Editor({ value, onChange, mode, onUploadImage, settings, projectMetadata, onAiThinking, onRegisterCancel, onRequestImprovement, onSelectionChange, comments, onAddComment, onCommentPositionsChange, onEditorScrollChange }) {
@@ -18,6 +18,14 @@ export function Editor({ value, onChange, mode, onUploadImage, settings, project
     const [cursorVersion, setCursorVersion] = useState(0);
     const [caretPos, setCaretPos] = useState({ top: 0, left: 0 });
     const [showCiteMenu, setShowCiteMenu] = useState(false);
+    const citeMenuRef = useRef(null);
+
+    const [showImageMenu, setShowImageMenu] = useState(false);
+    const [showListMenu, setShowListMenu] = useState(false);
+    const [showDocModal, setShowDocModal] = useState(false);
+
+    const imageMenuRef = useRef(null);
+    const listMenuRef = useRef(null);
 
     // Improvement/Comment Widget State
     const [showWidget, setShowWidget] = useState(false);
@@ -180,6 +188,23 @@ export function Editor({ value, onChange, mode, onUploadImage, settings, project
     useEffect(() => {
         updateCursor();
     }, [updateCursor]);
+
+    // Close dropdown menus on outside click
+    useEffect(() => {
+        const handleClickOutside = (e) => {
+            if (showCiteMenu && citeMenuRef.current && !citeMenuRef.current.contains(e.target)) {
+                setShowCiteMenu(false);
+            }
+            if (showImageMenu && imageMenuRef.current && !imageMenuRef.current.contains(e.target)) {
+                setShowImageMenu(false);
+            }
+            if (showListMenu && listMenuRef.current && !listMenuRef.current.contains(e.target)) {
+                setShowListMenu(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [showCiteMenu, showImageMenu, showListMenu]);
 
     // --- Compute comment ranges in the text ---
     const commentRanges = useMemo(() => {
@@ -480,13 +505,70 @@ export function Editor({ value, onChange, mode, onUploadImage, settings, project
                 <ToolBtn icon={<Heading1 size={18} />} onClick={() => insertText('# ')} title="H1" />
                 <ToolBtn icon={<Heading2 size={18} />} onClick={() => insertText('## ')} title="H2" />
                 <div className="divider"></div>
-                <ToolBtn icon={<List size={18} />} onClick={() => insertText('- ')} title="List" />
+                
+                {/* List Dropdown Menu */}
+                <div className="relative-tool-container" ref={listMenuRef} style={{ position: 'relative', display: 'inline-block' }}>
+                    <ToolBtn icon={<List size={18} />} onClick={() => setShowListMenu(prev => !prev)} title="List Options" />
+                    {showListMenu && (
+                        <div className="tool-dropdown-menu" style={{
+                            position: 'absolute',
+                            top: '100%',
+                            left: 0,
+                            background: 'var(--bg-panel)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '6px',
+                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+                            zIndex: 100,
+                            minWidth: '160px',
+                            padding: '4px 0'
+                        }}>
+                            <button className="dropdown-item" onClick={() => { insertText('- '); setShowListMenu(false); }}>
+                                Bullet List (Dots)
+                            </button>
+                            <button className="dropdown-item" onClick={() => { insertText('1. '); setShowListMenu(false); }}>
+                                Numbered List
+                            </button>
+                            <button className="dropdown-item" onClick={() => { insertText('- [ ] '); setShowListMenu(false); }}>
+                                Checklist
+                            </button>
+                        </div>
+                    )}
+                </div>
+
                 <ToolBtn icon={<Quote size={18} />} onClick={() => insertText('> ')} title="Quote" />
                 <ToolBtn icon={<Code size={18} />} onClick={() => insertText('`', '`')} title="Inline Code" />
                 <div className="divider"></div>
                 <ToolBtn icon={<Link size={18} />} onClick={() => insertText('[', '](url)')} title="Link" />
-                <ToolBtn icon={<Image size={18} />} onClick={() => insertText('![Caption of the figure]', '(path_to_figure){#label_figure width=100%}')} title="Image (Text)" />
-                <ToolBtn icon={<ImagePlus size={18} />} onClick={handleImageUpload} title="Upload Image" />
+                
+                {/* Figure Dropdown Menu */}
+                <div className="relative-tool-container" ref={imageMenuRef} style={{ position: 'relative', display: 'inline-block' }}>
+                    <ToolBtn icon={<Image size={18} />} onClick={() => setShowImageMenu(prev => !prev)} title="Insert Figure" />
+                    {showImageMenu && (
+                        <div className="tool-dropdown-menu" style={{
+                            position: 'absolute',
+                            top: '100%',
+                            left: 0,
+                            background: 'var(--bg-panel)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '6px',
+                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+                            zIndex: 100,
+                            minWidth: '185px',
+                            padding: '4px 0'
+                        }}>
+                            <button className="dropdown-item" onClick={() => { insertText('![Caption of the figure]', '(path_to_figure){#label_figure width=100%}'); setShowImageMenu(false); }}>
+                                Insert Image Template
+                            </button>
+                            <button className="dropdown-item" onClick={() => { handleImageUpload(); setShowImageMenu(false); }}>
+                                Upload Image File
+                            </button>
+                        </div>
+                    )}
+                </div>
+
+                <ToolBtn icon={<Sigma size={18} />} onClick={() => insertText('$$E = mc^2$${#eq_energy}', '')} title="Equation" />
+                <ToolBtn icon={<Table size={18} />} onClick={() => insertText('\n| Header 1 | Header 2 |\n|---|---|\n| Cell 1 | Cell 2 |\n\n[Table Caption]{#tbl_label}\n', '')} title="Table" />
+                
                 <div className="divider"></div>
                 {settings?.ai?.enabled && settings?.ai?.inlineSuggestions?.enabled !== false && (
                     <ToolBtn icon={<Sparkles size={18} />} onClick={() => {
@@ -494,12 +576,12 @@ export function Editor({ value, onChange, mode, onUploadImage, settings, project
                         fetchSuggestion();
                     }} title="Trigger AI (Ctrl+Space)" />
                 )}
-                {/* Researcher Mode Tools */}
-                {mode === 'researcher' && (
-                    <div className="relative-tool-container" style={{ position: 'relative', display: 'inline-block' }}>
+                {/* Citation Tools — available in researcher, engineer, scholar modes */}
+                {(mode === 'researcher' || mode === 'engineer' || mode === 'scholar') && (
+                    <div className="relative-tool-container" ref={citeMenuRef} style={{ position: 'relative', display: 'inline-block' }}>
                         <ToolBtn
                             icon={<BookMarked size={18} />}
-                            onClick={() => setShowCiteMenu(!showCiteMenu)}
+                            onClick={() => setShowCiteMenu(prev => !prev)}
                             title="Insert Citation or Reference"
                         />
                         {showCiteMenu && (
@@ -535,6 +617,16 @@ export function Editor({ value, onChange, mode, onUploadImage, settings, project
                         )}
                     </div>
                 )}
+
+                {/* Documentation Button */}
+                <button
+                    onClick={() => setShowDocModal(true)}
+                    title="Documentation & Format Guide"
+                    className="btn-icon"
+                    style={{ marginLeft: 'auto' }}
+                >
+                    <BookOpen size={18} />
+                </button>
             </div>
 
             {/* Text Area */}
@@ -754,6 +846,151 @@ export function Editor({ value, onChange, mode, onUploadImage, settings, project
                     }}
                 />
             </div>
+
+            {/* Documentation Modal */}
+            {showDocModal && (
+                <div className="doc-modal-overlay" style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    width: '100vw',
+                    height: '100vh',
+                    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+                    backdropFilter: 'blur(8px)',
+                    zIndex: 9999,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                }} onClick={() => setShowDocModal(false)}>
+                    <div className="doc-modal-content" style={{
+                        width: '85%',
+                        maxWidth: '900px',
+                        maxHeight: '85vh',
+                        backgroundColor: 'var(--bg-panel)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '12px',
+                        boxShadow: '0 12px 40px rgba(0, 0, 0, 0.3)',
+                        padding: '28px',
+                        overflowY: 'auto',
+                        position: 'relative',
+                        display: 'flex',
+                        flexDirection: 'column'
+                    }} onClick={(e) => e.stopPropagation()}>
+                        
+                        {/* Close button */}
+                        <button 
+                            onClick={() => setShowDocModal(false)}
+                            style={{
+                                position: 'absolute',
+                                top: '20px',
+                                right: '20px',
+                                border: 'none',
+                                background: 'var(--hover-bg)',
+                                color: 'var(--text-primary)',
+                                cursor: 'pointer',
+                                padding: '8px',
+                                borderRadius: '50%',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                transition: 'all 0.2s ease'
+                            }}
+                            className="btn-close-modal"
+                        >
+                            <X size={18} />
+                        </button>
+
+                        <h2 style={{ margin: '0 0 16px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px', color: 'var(--text-primary)', fontSize: '1.4rem', fontWeight: 700 }}>
+                            Writing Syntax & Reference Manual
+                        </h2>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
+                            <p style={{ color: 'var(--text-secondary)', margin: 0, fontSize: '0.92rem', lineHeight: 1.6 }}>
+                                This manual details the complete markdown syntax, formatting tools, equations, tables, figures, bibliography citations, and the interactive cross-referencing system. Everything you write in the editor will compile directly inside the Preview panel.
+                            </p>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                                {/* Left Column: Basic Typography */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                    <h3 style={{ margin: '0', color: 'var(--accent-color)', fontSize: '1.1rem', fontWeight: 600 }}>Typography & Formatting</h3>
+                                    
+                                    <div style={{ background: 'var(--bg-app)', padding: '14px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                        <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '6px', color: 'var(--text-primary)' }}>Inline Styling (Bold, Italic, Underline)</div>
+                                        <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '8px', lineHeight: 1.4 }}>Format text decorations using standard markdown wraps or HTML spans.</div>
+                                        <pre style={{ margin: 0, padding: '8px', background: 'var(--bg-panel)', borderRadius: '6px', fontSize: '0.78rem', border: '1px solid var(--border-color)', overflowX: 'auto', color: 'var(--text-primary)' }}><code>**bold text**&#10;*italic text*&#10;&lt;u&gt;underlined text&lt;/u&gt;</code></pre>
+                                    </div>
+
+                                    <div style={{ background: 'var(--bg-app)', padding: '14px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                        <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '6px', color: 'var(--text-primary)' }}>Headings (H1 & H2)</div>
+                                        <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '8px', lineHeight: 1.4 }}>Organize document structure. Headings form the structural indices.</div>
+                                        <pre style={{ margin: 0, padding: '8px', background: 'var(--bg-panel)', borderRadius: '6px', fontSize: '0.78rem', border: '1px solid var(--border-color)', overflowX: 'auto', color: 'var(--text-primary)' }}><code># Primary Section Title&#10;## Secondary Subsection Title</code></pre>
+                                    </div>
+
+                                    <div style={{ background: 'var(--bg-app)', padding: '14px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                        <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '6px', color: 'var(--text-primary)' }}>Lists & Tasks</div>
+                                        <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '8px', lineHeight: 1.4 }}>Bullet points, numeric lists, and interactive checkbox checklists.</div>
+                                        <pre style={{ margin: 0, padding: '8px', background: 'var(--bg-panel)', borderRadius: '6px', fontSize: '0.78rem', border: '1px solid var(--border-color)', overflowX: 'auto', color: 'var(--text-primary)' }}><code>- Bullet list item&#10;1. First numeric item&#10;- [ ] Unfinished checklist task&#10;- [x] Completed checklist task</code></pre>
+                                    </div>
+
+                                    <div style={{ background: 'var(--bg-app)', padding: '14px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                        <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '6px', color: 'var(--text-primary)' }}>Quotes & Blockquotes</div>
+                                        <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '8px', lineHeight: 1.4 }}>Indent reference quotations or citations.</div>
+                                        <pre style={{ margin: 0, padding: '8px', background: 'var(--bg-panel)', borderRadius: '6px', fontSize: '0.78rem', border: '1px solid var(--border-color)', overflowX: 'auto', color: 'var(--text-primary)' }}><code>&gt; This is a blockquote indentation block&#10;&gt; for referencing external words.</code></pre>
+                                    </div>
+                                </div>
+
+                                {/* Right Column: Equations, Tables & Figures */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                    <h3 style={{ margin: '0', color: 'var(--accent-color)', fontSize: '1.1rem', fontWeight: 600 }}>Scientific Elements</h3>
+
+                                                                    <div style={{ background: 'var(--bg-app)', padding: '14px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                        <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '6px', color: 'var(--text-primary)' }}>Equations (Labelable & Custom Alignment)</div>
+                                        <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '8px', lineHeight: 1.4 }}>Write LaTeX block equations ($$ ... $$) or inline ($ ... $) appending a label. Equations are automatically numbered on the right. Support options: <code>align=center/left</code>.</div>
+                                        <pre style={{ margin: 0, padding: '8px', background: 'var(--bg-panel)', borderRadius: '6px', fontSize: '0.78rem', border: '1px solid var(--border-color)', overflowX: 'auto', color: 'var(--text-primary)' }}><code>{"$$ASD = 2$${#eq_lateral_foot align=left}\n\n$F = ma$${#eq_force align=center}"}</code></pre>
+                                    </div>
+
+                                    <div style={{ background: 'var(--bg-app)', padding: '14px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                        <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '6px', color: 'var(--text-primary)' }}>Tables (Labelable & Custom Layouts)</div>
+                                        <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '8px', lineHeight: 1.4 }}>Create standard markdown tables followed by an optional caption and label. Support options: <code>borders=true/false</code>, <code>center=true/false</code>, <code>center_text=true/false</code>.</div>
+                                        <pre style={{ margin: 0, padding: '8px', background: 'var(--bg-panel)', borderRadius: '6px', fontSize: '0.78rem', border: '1px solid var(--border-color)', overflowX: 'auto', color: 'var(--text-primary)' }}><code>{"| Param | Value |\n|---|---|\n| Force | 150 N |\n\n[Experimental Parameters]{#tbl_experimental borders=false center=false center_text=true}"}</code></pre>
+                                    </div>
+
+                                    <div style={{ background: 'var(--bg-app)', padding: '14px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                        <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '6px', color: 'var(--text-primary)' }}>Figures & Images</div>
+                                        <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '8px', lineHeight: 1.4 }}>Embed project figures with captions, width ratios, and labels.</div>
+                                        <pre style={{ margin: 0, padding: '8px', background: 'var(--bg-panel)', borderRadius: '6px', fontSize: '0.78rem', border: '1px solid var(--border-color)', overflowX: 'auto', color: 'var(--text-primary)' }}><code>{"![Pedestrian path](figures/pedestrian.png){#fig_path width=80%}"}</code></pre>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Reference System & Citations */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                <h3 style={{ margin: '8px 0 0 0', color: 'var(--accent-color)', fontSize: '1.1rem', fontWeight: 600 }}>Citations & Cross-References</h3>
+                                
+                                <div style={{ background: 'var(--bg-app)', padding: '18px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                                        <div>
+                                            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '6px', color: 'var(--text-primary)' }}>1. Cross-Referencing System</div>
+                                            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '8px', lineHeight: 1.4 }}>
+                                                Link directly to equations, tables, or figures in your paragraphs. The system dynamically computes the element number (e.g. "1") and resolves the link.
+                                            </div>
+                                            <pre style={{ margin: 0, padding: '8px', background: 'var(--bg-panel)', borderRadius: '6px', fontSize: '0.78rem', border: '1px solid var(--border-color)', overflowX: 'auto', color: 'var(--text-primary)' }}><code>{"In Eq. [equation@eq_lateral_foot], we calculate...\nSee Table [table@tbl_experimental] for values...\nRefer to Figure [figure@fig_path]..."}</code></pre>
+                                        </div>
+
+                                        <div>
+                                            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '6px', color: 'var(--text-primary)' }}>2. Academic Bibliography Citations</div>
+                                            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '8px', lineHeight: 1.4 }}>
+                                                Cite items from your BibTeX bibliography file (`references.bib`). Renders in APA narrative or parenthetical styling.
+                                            </div>
+                                            <pre style={{ margin: 0, padding: '8px', background: 'var(--bg-panel)', borderRadius: '6px', fontSize: '0.78rem', border: '1px solid var(--border-color)', overflowX: 'auto', color: 'var(--text-primary)' }}><code>{"Parenthetical: [@einstein1905]\nNarrative: [text@einstein1905]"}</code></pre>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

@@ -3,6 +3,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
 import rehypeKatex from 'rehype-katex';
+import rehypeRaw from 'rehype-raw';
+import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { ChevronDown, ChevronRight, List, FileText, Sparkles, MessageSquare, Check, X as XIcon, RefreshCw, Send, Trash2, Network, Lightbulb } from 'lucide-react';
 import { NotesGraph } from './NotesGraph';
@@ -61,6 +63,8 @@ const parseBibTex = (text) => {
     blocks.forEach(block => {
         const openBrace = block.indexOf('{');
         if (openBrace === -1) return;
+        const type = block.substring(0, openBrace).trim().toLowerCase();
+        if (type === 'comment' || type === 'preamble') return;
 
         // Extract key
         const afterType = block.substring(openBrace + 1);
@@ -69,22 +73,26 @@ const parseBibTex = (text) => {
         const key = afterType.substring(0, comma).trim();
 
         // Parse fields
-        const entry = { key };
+        const entry = { key, type };
         const body = afterType.substring(comma + 1);
 
-        // Match field = {value} pattern
-        // Note: This is a simple regex and assumes values are enclosed in braces and don't contain nested braces
-        const fieldRegex = /([a-zA-Z0-9_\-]+)\s*=\s*{([^}]+)}/g;
+        // Match field = {value}, "value", or unquoted number/string pattern
+        const fieldRegex = /([a-zA-Z0-9_\-]+)\s*=\s*(?:{([^}]+)}|"([^"]+)"|([^\s,{}"]+))/g;
         let match;
         while ((match = fieldRegex.exec(body)) !== null) {
-            entry[match[1].toLowerCase()] = match[2];
+            const field = match[1].toLowerCase();
+            const value = match[2] || match[3] || match[4] || '';
+            entry[field] = value.trim();
         }
         entries[key] = entry;
     });
     return entries;
 };
 
-const formatCitation = (key, entry, type = 'parenthetical') => {
+const formatCitation = (key, entry, type = 'parenthetical', useAPA = true) => {
+    if (!useAPA) {
+        return `[${key}]`;
+    }
     if (!entry) return type === 'narrative' ? `${key}` : `(${key})`;
     const year = entry.year || 'n.d.';
     const authorsStr = entry.author;
@@ -109,7 +117,7 @@ const formatCitation = (key, entry, type = 'parenthetical') => {
     return `(${label}, ${year})`;
 };
 
-const ReferenceList = ({ bibData, citedKeys }) => {
+const ReferenceList = ({ bibData, citedKeys, useAPA = true }) => {
     if (!bibData || Object.keys(bibData).length === 0) return null;
 
     // Filter to show only cited keys? Or all? User said "add the references", usually implies all in bib or cited.
@@ -123,6 +131,10 @@ const ReferenceList = ({ bibData, citedKeys }) => {
         const authB = b.author || '';
         return authA.localeCompare(authB);
     });
+
+    const itemStyle = useAPA
+        ? { marginBottom: '1em', paddingLeft: '1.5em', textIndent: '-1.5em' }
+        : { marginBottom: '1em' };
 
     return (
         <div className="references-section prose" style={{ marginTop: '4rem', paddingTop: '2rem', borderTop: '1px solid #eee' }}>
@@ -144,7 +156,8 @@ const ReferenceList = ({ bibData, citedKeys }) => {
                     }).join(', ') : 'Unknown Author';
 
                     return (
-                        <div key={entry.key} style={{ marginBottom: '1em', paddingLeft: '1.5em', textIndent: '-1.5em' }}>
+                        <div key={entry.key} style={itemStyle}>
+                            {!useAPA && <strong style={{ marginRight: '8px' }}>[{entry.key}]</strong>}
                             {authorsStr} ({entry.year}). {entry.title}.
                             {entry.journal && <span> <i>{entry.journal}</i>, </span>}
                             {entry.volume && <span><i>{entry.volume}</i></span>}
@@ -185,10 +198,6 @@ const processReferences = (text) => {
         // Extract ID (#id or id=...)
         const idMatch = attrs.match(/#([a-zA-Z0-9_\-]+)/) || attrs.match(/id=([a-zA-Z0-9_\-]+)/);
 
-        // Only assign number if ID is present or if we want to auto-number all figures (usually good practice)
-        // But user specifically asked for "linkable", implying ID.
-        // Let's increment count anyway for "Figure X" label if ID is present.
-
         if (idMatch) {
             id = idMatch[1];
             figCount++;
@@ -197,38 +206,135 @@ const processReferences = (text) => {
         }
 
         // Pack metadata into alt for AsyncImage to retrieve
-        // Format: Alt Text|width=...|id=...|label=...
         const packedAlt = `${alt}|width=${width}|id=${id}|label=${label}`;
         return `![${packedAlt}](${src})`;
     });
 
-    // 2. Tables: Table: Caption {#id}
-    // Pattern: Line starting with "Table:" ending with "{#id}"
-    // We replace it with an HTML caption + anchor
-    content = content.replace(/^Table:\s*(.*?)\s*\{#([a-zA-Z0-9_\-]+)\}/gm, (match, caption, id) => {
+    // 2. Tables:
+    // Pattern A: Markdown tables followed by [caption]{#id} or {#id}
+    const tableRegex = /((?:(?:\r?\n|^)[ \t]*\|[^\n]*\|[ \t]*)+)[\s\r\n]*(?:\[([^\]]+)\])?\s*\{([^}]+)\}/g;
+    content = content.replace(tableRegex, (match, tableBlock, caption, attrs) => {
+        const idMatch = attrs.match(/#([a-zA-Z0-9_\-]+)/) || attrs.match(/id=([a-zA-Z0-9_\-]+)/);
+        let id = idMatch ? idMatch[1] : '';
+
+        const bordersMatch = attrs.match(/borders=(true|false)/);
+        const centerMatch = attrs.match(/center=(true|false)/);
+        const centerTextMatch = attrs.match(/center_text=(true|false)/);
+
+        const borders = bordersMatch ? (bordersMatch[1] === 'true') : true;
+        const center = centerMatch ? (centerMatch[1] === 'true') : true;
+        const centerText = centerTextMatch ? (centerTextMatch[1] === 'true') : false;
+
         tblCount++;
         const label = `Table ${tblCount}`;
-        map[id] = { label, type: 'table', num: tblCount };
-        return `<div id="${id}" class="table-caption" style="text-align:center; margin: 1em 0; font-weight:500;"><strong>${label}</strong>: ${caption}</div>`;
+        if (id) {
+            map[id] = { label, type: 'table', num: tblCount };
+        }
+
+        let tableClasses = ['table-container'];
+        if (!borders) tableClasses.push('no-borders');
+        if (center) {
+            tableClasses.push('center-table');
+        } else {
+            tableClasses.push('left-table');
+        }
+        if (centerText) tableClasses.push('center-text-table');
+
+        const captionHtml = `<div ${id ? `id="${id}"` : ''} class="table-caption" style="text-align:center; margin: 1.5em 0 0.5em 0; font-weight:500;"><strong>${label}</strong>${caption ? `: ${caption}` : ''}</div>`;
+        return `\n\n<div class="${tableClasses.join(' ')}">\n\n${captionHtml}\n\n${tableBlock}\n\n</div>\n\n`;
     });
 
-    // 3. Equations: $$ ... \label{id} ... $$
-    // We expect \label{id} inside $$ block.
-    // We wrap in a div with id, and replace \label with \tag if simpler, or just remove label.
-    // Katex \tag overrides auto-numbering.
+    // Pattern B (Legacy): Table: Caption {#id}
+    content = content.replace(/^Table:\s*(.*?)\s*\{([^}]+)\}/gm, (match, caption, attrs) => {
+        const idMatch = attrs.match(/#([a-zA-Z0-9_\-]+)/) || attrs.match(/id=([a-zA-Z0-9_\-]+)/);
+        let id = idMatch ? idMatch[1] : '';
+
+        const bordersMatch = attrs.match(/borders=(true|false)/);
+        const centerMatch = attrs.match(/center=(true|false)/);
+        const centerTextMatch = attrs.match(/center_text=(true|false)/);
+
+        const borders = bordersMatch ? (bordersMatch[1] === 'true') : true;
+        const center = centerMatch ? (centerMatch[1] === 'true') : true;
+        const centerText = centerTextMatch ? (centerTextMatch[1] === 'true') : false;
+
+        tblCount++;
+        const label = `Table ${tblCount}`;
+        if (id) {
+            map[id] = { label, type: 'table', num: tblCount };
+        }
+
+        let tableClasses = ['table-container'];
+        if (!borders) tableClasses.push('no-borders');
+        if (center) {
+            tableClasses.push('center-table');
+        } else {
+            tableClasses.push('left-table');
+        }
+        if (centerText) tableClasses.push('center-text-table');
+
+        const captionHtml = `<div ${id ? `id="${id}"` : ''} class="table-caption" style="text-align:center; margin: 1em 0; font-weight:500;"><strong>${label}</strong>: ${caption}</div>`;
+        return `\n\n<div class="${tableClasses.join(' ')}">\n\n${captionHtml}\n\n</div>\n\n`;
+    });
+
+    // Helper to pre-render KaTeX to HTML so we bypass the markdown math pipeline
+    const renderKatexBlock = (mathContent, id, eqNum, align = 'center') => {
+        try {
+            const rendered = katex.renderToString(mathContent.trim() + `\\tag{${eqNum}}`, {
+                displayMode: true,
+                throwOnError: false,
+            });
+            const alignClass = align === 'left' ? 'align-left' : 'align-center';
+            return `\n<div id="${id}" class="labeled-equation katex-display ${alignClass}">${rendered}</div>\n`;
+        } catch (e) {
+            const alignClass = align === 'left' ? 'align-left' : 'align-center';
+            return `\n<div id="${id}" class="labeled-equation katex-display ${alignClass}"><span class="katex-error">${mathContent}\\tag{${eqNum}}</span></div>\n`;
+        }
+    };
+
+    // 3. Equations:
+    // Style A: $$ ... $$ {#id} or $$ ... $${#id}
+    content = content.replace(/\$\$([\s\S]*?)\$\$\s*\{([^}]+)\}/g, (match, math, attrs) => {
+        const idMatch = attrs.match(/#([a-zA-Z0-9_\-]+)/) || attrs.match(/id=([a-zA-Z0-9_\-]+)/);
+        if (!idMatch) return match;
+        const id = idMatch[1];
+
+        const alignMatch = attrs.match(/align=(center|left)/);
+        const align = alignMatch ? alignMatch[1] : 'center';
+
+        eqCount++;
+        const label = `Equation ${eqCount}`;
+        map[id] = { label, type: 'equation', num: eqCount };
+        return renderKatexBlock(math, id, eqCount, align);
+    });
+
+    // Style B: $ ... $ {#id} or $ ... ${#id}
+    content = content.replace(/\$([^$\n]+?)\$\s*\{([^}]+)\}/g, (match, math, attrs) => {
+        const idMatch = attrs.match(/#([a-zA-Z0-9_\-]+)/) || attrs.match(/id=([a-zA-Z0-9_\-]+)/);
+        if (!idMatch) return match;
+        const id = idMatch[1];
+
+        const alignMatch = attrs.match(/align=(center|left)/);
+        const align = alignMatch ? alignMatch[1] : 'center';
+
+        eqCount++;
+        const label = `Equation ${eqCount}`;
+        map[id] = { label, type: 'equation', num: eqCount };
+        return renderKatexBlock(math, id, eqCount, align);
+    });
+
+    // Style C (Legacy): $$ ... \label{id} ... $$
     content = content.replace(/\$\$([\s\S]*?)\\label\{([a-zA-Z0-9_\-]+)\}([\s\S]*?)\$\$/g, (match, before, id, after) => {
         eqCount++;
         const label = `Equation ${eqCount}`;
         map[id] = { label, type: 'equation', num: eqCount };
-        // We use \tag for visual numbering
-        return `<div id="${id}">$$${before}${after}\\tag{${eqCount}}$$</div>`;
+        return renderKatexBlock(before + after, id, eqCount);
     });
 
     // 4. Resolve Citations: [type@id]
+    // Renders ONLY the numeric ID for figures, tables, and equations
     content = content.replace(/\[(figure|table|equation)@([a-zA-Z0-9_\-]+)\]/g, (match, type, id) => {
         if (map[id]) {
-            // Return a link to the anchor
-            return `[${map[id].label}](#${id})`;
+            return `[${map[id].num}](#${id})`;
         }
         return `[?${type}@${id}?]`;
     });
@@ -307,11 +413,30 @@ const MarkdownSection = ({ title, content, offset, dirHandle, onUpdateContent, a
             <div className="prose preamble">
                 <ReactMarkdown
                     remarkPlugins={[remarkMath, remarkGfm]}
-                    rehypePlugins={[rehypeKatex]}
+                    rehypePlugins={[[rehypeRaw, { passThrough: ['math', 'inlineMath'] }], rehypeKatex]}
                     components={components}
                 >
                     {content}
                 </ReactMarkdown>
+            </div>
+        );
+    }
+
+    const isCollapsible = projectMetadata?.collapsibleSections;
+
+    if (!isCollapsible) {
+        return (
+            <div className="markdown-section-wrapper">
+                <h1 className="section-h1-title" style={{ marginTop: '2rem' }}>{title}</h1>
+                <div className="prose section-content">
+                    <ReactMarkdown
+                        remarkPlugins={[remarkMath, remarkGfm]}
+                        rehypePlugins={[[rehypeRaw, { passThrough: ['math', 'inlineMath'] }], rehypeKatex]}
+                        components={components}
+                    >
+                        {content}
+                    </ReactMarkdown>
+                </div>
             </div>
         );
     }
@@ -328,13 +453,13 @@ const MarkdownSection = ({ title, content, offset, dirHandle, onUpdateContent, a
                 <div style={{ color: activeAccentColor }}>
                     {isOpen ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
                 </div>
-                <h1 className="section-h1-title">{title}</h1>
+                <h1 className="section-h1-title" style={{ margin: 0 }}>{title}</h1>
             </div>
             {isOpen && (
                 <div className="prose section-content">
                     <ReactMarkdown
                         remarkPlugins={[remarkMath, remarkGfm]}
-                        rehypePlugins={[rehypeKatex]}
+                        rehypePlugins={[[rehypeRaw, { passThrough: ['math', 'inlineMath'] }], rehypeKatex]}
                         components={components}
                     >
                         {content}
@@ -345,7 +470,7 @@ const MarkdownSection = ({ title, content, offset, dirHandle, onUpdateContent, a
     );
 };
 
-function MarkdownPreview({ content, metadata, projectMetadata, dirHandle, mode, onUpdateContent, onUpdateMetadata, paperView }) {
+function MarkdownPreview({ content, metadata, projectMetadata, dirHandle, mode, onUpdateContent, onUpdateMetadata, paperView, isEditingNote, isEditingIdea }) {
     const [coverOpen, setCoverOpen] = useState(true);
     const [tocOpen, setTocOpen] = useState(true);
 
@@ -361,11 +486,13 @@ function MarkdownPreview({ content, metadata, projectMetadata, dirHandle, mode, 
         displayAuthors = typeof author === 'object' ? (author.name || JSON.stringify(author)) : author;
     }
 
-    const isResearch = mode === 'researcher';
-    const isEngineer = mode === 'engineer';
-    const isScript = mode === 'scriptwriter';
-    const isScholar = mode === 'scholar';
-    const isJournalist = mode === 'journalist';
+    const projectFormatEnabled = !isEditingNote && !isEditingIdea && (metadata?.useProjectFormat !== false);
+
+    const isResearch = projectFormatEnabled && mode === 'researcher';
+    const isEngineer = projectFormatEnabled && mode === 'engineer';
+    const isScript = projectFormatEnabled && mode === 'scriptwriter';
+    const isScholar = projectFormatEnabled && mode === 'scholar';
+    const isJournalist = projectFormatEnabled && mode === 'journalist';
 
     // Parse headers for Table of Contents
     const parseHeaders = (md) => {
@@ -459,37 +586,78 @@ function MarkdownPreview({ content, metadata, projectMetadata, dirHandle, mode, 
     useEffect(() => {
         const loadBib = async () => {
             if (!dirHandle) return;
+            if (!metadata?.useReferences) {
+                setBibData({});
+                return;
+            }
             try {
-                // Use project setting or default
-                const bibFile = projectMetadata?.bibFile || 'references.bib';
-                const fileHandle = await dirHandle.getFileHandle(bibFile);
+                // referencesFile is the document-specific file name (defaults to references.bib)
+                const bibFilename = metadata?.referencesFile || 'references.bib';
+                
+                // We always look it up inside the "references" folder.
+                let referencesDirHandle;
+                try {
+                    referencesDirHandle = await dirHandle.getDirectoryHandle('references');
+                } catch (err) {
+                    // Fallback to project root if directory doesn't exist
+                    referencesDirHandle = dirHandle;
+                }
+
+                // If user entered e.g. "references/foo.bib", we resolve the subfolders.
+                const parts = bibFilename.split('/');
+                let currentHandle = referencesDirHandle;
+                
+                for (let i = 0; i < parts.length - 1; i++) {
+                    if (parts[i] === 'references' && i === 0) {
+                        // Skip redundant leading "references/" if they put it anyway
+                        continue;
+                    }
+                    currentHandle = await currentHandle.getDirectoryHandle(parts[i]);
+                }
+                
+                const filename = parts[parts.length - 1];
+                const fileHandle = await currentHandle.getFileHandle(filename);
                 const file = await fileHandle.getFile();
                 const text = await file.text();
                 setBibData(parseBibTex(text));
             } catch (e) {
-                // console.warn('No references.bib found');
+                console.warn('Failed to load bibliography file:', e);
                 setBibData({});
             }
         };
         loadBib();
-    }, [dirHandle, projectMetadata?.bibFile]);
+    }, [dirHandle, metadata?.useReferences, metadata?.referencesFile]);
 
     // Process citations in content
-    // Replace [@Key] with APA citation
+    // Replace [@Key] or [cite@Key] with citation
     const { contentWithCitations, citedKeys } = React.useMemo(() => {
-        if (!content) return { contentWithCitations: '', citedKeys: new Set() };
+        const enableReferences = metadata?.useReferences;
+        if (!content || !enableReferences) {
+            return { contentWithCitations: content || '', citedKeys: new Set() };
+        }
 
+        const useAPA = metadata?.useAPA !== false;
         const keys = new Set();
-        const newContent = content.replace(/\[text@([a-zA-Z0-9_\-]+)\]/g, (match, key) => {
-            keys.add(key);
-            return formatCitation(key, bibData[key], 'narrative');
-        }).replace(/\[@([a-zA-Z0-9_\-]+)\]/g, (match, key) => {
-            keys.add(key);
-            return formatCitation(key, bibData[key], 'parenthetical');
-        });
+        const newContent = content
+            .replace(/\[textcite@([a-zA-Z0-9_\-]+)\]/g, (match, key) => {
+                keys.add(key);
+                return formatCitation(key, bibData[key], 'narrative', useAPA);
+            })
+            .replace(/\[cite@([a-zA-Z0-9_\-]+)\]/g, (match, key) => {
+                keys.add(key);
+                return formatCitation(key, bibData[key], 'parenthetical', useAPA);
+            })
+            .replace(/\[text@([a-zA-Z0-9_\-]+)\]/g, (match, key) => {
+                keys.add(key);
+                return formatCitation(key, bibData[key], 'narrative', useAPA);
+            })
+            .replace(/\[@([a-zA-Z0-9_\-]+)\]/g, (match, key) => {
+                keys.add(key);
+                return formatCitation(key, bibData[key], 'parenthetical', useAPA);
+            });
 
         return { contentWithCitations: newContent, citedKeys: keys };
-    }, [content, bibData]);
+    }, [content, bibData, metadata?.useReferences, metadata?.useAPA]);
 
     // Process Internal References (Figures, Tables, Equations)
     // Process Internal References (Figures, Tables, Equations)
@@ -508,7 +676,11 @@ function MarkdownPreview({ content, metadata, projectMetadata, dirHandle, mode, 
                 '--scholar-accent-rgb': hexToRgb(activeAccentColor)
             }}
         >
-            <div className={`preview-content ${isResearch ? 'paper-layout' : ''} ${isEngineer ? 'eng-report-layout' : ''} ${isScript ? 'script-layout' : ''} ${isScholar ? 'scholar-lecture-layout' : ''} ${isJournalist ? 'journal-layout' : ''}`}>
+            <div className={`preview-content ${isResearch ? 'paper-layout' : ''} ${isEngineer ? 'eng-report-layout' : ''} ${isScript ? 'script-layout' : ''} ${isScholar ? 'scholar-lecture-layout' : ''} ${isJournalist ? 'journal-layout' : ''}`} style={{
+                ...(projectMetadata?.previewFont ? { fontFamily: projectMetadata.previewFont } : {}),
+                ...(projectMetadata?.previewFontSize ? { fontSize: `${projectMetadata.previewFontSize}px` } : {}),
+                ...(projectMetadata?.previewTextAlign ? { textAlign: projectMetadata.previewTextAlign } : {})
+            }}>
 
                 {/* Engineer Cover Page */}
                 {isEngineer && (
@@ -764,8 +936,8 @@ function MarkdownPreview({ content, metadata, projectMetadata, dirHandle, mode, 
                     ))}
 
                     {/* References Section */}
-                    {metadata?.showReferences && !isJournalist && (
-                        <ReferenceList bibData={bibData} citedKeys={citedKeys} />
+                    {(metadata?.useReferences ?? metadata?.showReferences) && (
+                        <ReferenceList bibData={bibData} citedKeys={citedKeys} useAPA={metadata?.useAPA !== false} />
                     )}
                 </div>
             </div>
@@ -860,6 +1032,8 @@ export function PreviewWrapper({ settings, content, metadata, projectMetadata, d
                         paperView={paperView}
                         onUpdateContent={onUpdateContent}
                         onUpdateMetadata={onUpdateMetadata}
+                        isEditingNote={isEditingNote}
+                        isEditingIdea={isEditingIdea}
                     />
                 </div>
 

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronUp, Trash2, Plus, X, Link2, Tag } from 'lucide-react';
 
-export function MetadataForm({ metadata, onChange, mode, isNote, isIdea, notesList = [], currentFilename }) {
+export function MetadataForm({ metadata, onChange, mode, isNote, isIdea, notesList = [], bibFiles = [], currentFilename, projectMetadata }) {
+    const enableReferences = projectMetadata?.enableReferences !== false;
     const [isExpanded, setIsExpanded] = useState(false);
 
     // States for notes features
@@ -701,21 +702,6 @@ export function MetadataForm({ metadata, onChange, mode, isNote, isIdea, notesLi
                                     placeholder={mode === 'engineer' ? "Executive summary of calculations..." : "Abstract..."}
                                 />
                             </div>
-                            <div className="form-group">
-                                <label>References</label>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, height: 35 }}>
-                                    <label className="switch small">
-                                        <input
-                                            type="checkbox"
-                                            name="showReferences"
-                                            checked={metadata.showReferences ?? false}
-                                            onChange={(e) => onChange({ ...metadata, showReferences: e.target.checked })}
-                                        />
-                                        <span className="slider round"></span>
-                                    </label>
-                                    <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>Append References (APA)</span>
-                                </div>
-                            </div>
                         </>
                     )}
 
@@ -847,38 +833,86 @@ export function MetadataForm({ metadata, onChange, mode, isNote, isIdea, notesLi
                         </>
                     )}
 
-                    <div className="form-group full-width">
-                        <label>Accent Color</label>
-                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                            {[
-                                '#9747ff', // Default Purple
-                                '#ff6b6b', // Red
-                                '#20c997', // Green
-                                '#339af0', // Blue
-                                '#fcc419', // Yellow
-                                '#ff922b', // Orange
-                                '#f06595', // Pink
-                                '#845ef7', // Violet
-                                '#51cf66', // Lime
-                                '#66d9e8'  // Cyan
-                            ].map(color => (
-                                <button
-                                    key={color}
-                                    onClick={() => onChange({ ...metadata, accentColor: color })}
-                                    style={{
-                                        width: 24,
-                                        height: 24,
-                                        borderRadius: '50%',
-                                        background: color,
-                                        border: metadata.accentColor === color ? '2px solid var(--text-primary)' : '2px solid transparent',
-                                        cursor: 'pointer',
-                                        boxShadow: 'var(--shadow-sm)'
-                                    }}
-                                    title={color}
+                    {/* Divider */}
+                    <div style={{ gridColumn: 'span 2', borderBottom: '1px solid var(--border-color)', margin: '12px 0 6px 0' }} />
+
+                    {/* Format Settings Section */}
+                    <div className="form-group full-width" style={{ gridColumn: 'span 2', display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 12px', background: 'rgba(150, 150, 150, 0.03)', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
+                        <span style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Format & Style</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, height: 35 }}>
+                            <label className="switch small">
+                                <input
+                                    type="checkbox"
+                                    name="useProjectFormat"
+                                    checked={metadata.useProjectFormat ?? true}
+                                    onChange={(e) => onChange({ ...metadata, useProjectFormat: e.target.checked })}
                                 />
-                            ))}
+                                <span className="slider round"></span>
+                            </label>
+                            <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>Enable Project Formatting Layout</span>
                         </div>
                     </div>
+
+                    {/* References Section */}
+                    <div className="form-group full-width" style={{ gridColumn: 'span 2', display: 'flex', flexDirection: 'column', gap: 10, padding: '12px', background: 'rgba(150, 150, 150, 0.03)', border: '1px solid var(--border-color)', borderRadius: '8px', marginTop: 6 }}>
+                        <span style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>References</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, height: 35 }}>
+                            <label className="switch small">
+                                <input
+                                    type="checkbox"
+                                    name="useReferences"
+                                    checked={metadata.useReferences ?? false}
+                                    onChange={(e) => onChange({ ...metadata, useReferences: e.target.checked })}
+                                />
+                                <span className="slider round"></span>
+                            </label>
+                            <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>Enable References</span>
+                        </div>
+
+                        {(metadata.useReferences ?? false) && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4, borderLeft: '2px solid var(--accent-color)', paddingLeft: 10 }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                    <label style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)' }}>References File Name (.bib)</label>
+                                    <textarea
+                                        name="referencesFile"
+                                        value={metadata.referencesFile ?? 'references.bib'}
+                                        onChange={handleChange}
+                                        rows={1}
+                                        placeholder="references.bib"
+                                        className="form-input"
+                                        style={{
+                                            width: '100%',
+                                            padding: '6px 10px',
+                                            borderRadius: 4,
+                                            border: '1px solid var(--border-color)',
+                                            background: 'var(--bg-panel)',
+                                            color: 'var(--text-primary)',
+                                            fontSize: '0.82rem',
+                                            resize: 'none',
+                                            minHeight: '32px'
+                                        }}
+                                    />
+                                    <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', opacity: 0.7 }}>
+                                        Looked up in the <code>references/</code> directory.
+                                    </span>
+                                </div>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, height: 35, marginTop: 4 }}>
+                                    <label className="switch small">
+                                        <input
+                                            type="checkbox"
+                                            name="useAPA"
+                                            checked={metadata.useAPA ?? true}
+                                            onChange={(e) => onChange({ ...metadata, useAPA: e.target.checked })}
+                                        />
+                                        <span className="slider round"></span>
+                                    </label>
+                                    <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>Add Reference Section</span>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
                 </div>
             )}
         </div>

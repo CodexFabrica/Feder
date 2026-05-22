@@ -65,7 +65,7 @@ ${abstract}
     latex += body;
 
     // Bibliography
-    if (metadata.references) {
+    if (metadata.showReferences || metadata.references) {
         latex += `
 \\bibliographystyle{plain}
 \\bibliography{references}

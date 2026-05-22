@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     rename: (oldPath, newPath) => ipcRenderer.invoke('fs:rename', { oldPath, newPath }),
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
     openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
+    openPath: (path) => ipcRenderer.invoke('shell:openPath', path),
     isElectron: true
 });
 

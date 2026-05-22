@@ -17,6 +17,8 @@ import { saveProjectHandle, getProjectHandle, saveRecentProject, getRecentProjec
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { SettingsModal } from './components/SettingsModal';
 import { StatusBar } from './components/StatusBar';
+import { PdfExportModal } from './components/PdfExportModal';
+import html2pdf from 'html2pdf.js';
 
 const isElectron = /Electron/i.test(navigator.userAgent);
 
@@ -41,6 +43,12 @@ function App() {
   const [hasNotesDir, setHasNotesDir] = useState(false);
   const [notesList, setNotesList] = useState([]);
   const [hasIdeasDir, setHasIdeasDir] = useState(false);
+  const [bibFiles, setBibFiles] = useState([]);
+
+  // PDF Export state
+  const [showPdfModal, setShowPdfModal] = useState(false);
+  const [printMode, setPrintMode] = useState(false);
+  const [printData, setPrintData] = useState({ content: '', metadata: {}, filename: 'export.pdf' });
 
   // Right Panel Tabs State
   const [rightPanelTab, setRightPanelTab] = useState('visualization'); // 'visualization', 'improvements', 'comments'
@@ -224,10 +232,36 @@ function App() {
     }
   }, [dirHandle]);
 
+  const scanBibFiles = useCallback(async () => {
+    if (!dirHandle) {
+      setBibFiles([]);
+      return;
+    }
+    try {
+      const list = [];
+      const recurse = async (handle, pathPrefix = '') => {
+        for await (const entry of handle.values()) {
+          if (entry.kind === 'file' && entry.name.endsWith('.bib')) {
+            list.push(pathPrefix ? `${pathPrefix}/${entry.name}` : entry.name);
+          } else if (entry.kind === 'directory' && !entry.name.startsWith('.')) {
+            const nextPrefix = pathPrefix ? `${pathPrefix}/${entry.name}` : entry.name;
+            await recurse(entry, nextPrefix);
+          }
+        }
+      };
+      await recurse(dirHandle, '');
+      setBibFiles(list);
+    } catch (err) {
+      console.error('Error scanning bib files:', err);
+      setBibFiles([]);
+    }
+  }, [dirHandle]);
+
   useEffect(() => {
     scanNotesDir();
     scanIdeasDir();
-  }, [dirHandle, refreshTrigger, scanNotesDir, scanIdeasDir]);
+    scanBibFiles();
+  }, [dirHandle, refreshTrigger, scanNotesDir, scanIdeasDir, scanBibFiles]);
 
   // Load recent projects
   useEffect(() => {
@@ -628,6 +662,25 @@ function App() {
       if (d.mode) {
         setMode(d.mode);
       }
+
+      // Ensure references folder exists if in a references-supporting mode and references are enabled
+      const projMode = d.mode || 'researcher';
+      const isReferencesMode = projMode === 'researcher' || projMode === 'engineer' || projMode === 'scholar';
+      const enableReferences = d.enableReferences !== false;
+      if (isReferencesMode && enableReferences) {
+        try {
+          await dir.getDirectoryHandle('references');
+        } catch (e) {
+          // Folder doesn't exist, create it and a default bib file
+          try {
+            const refDir = await createSubDir(dir, 'references');
+            const bibContent = `@article{example2026,\n  author = {Author, An},\n  title = {A seminal work on the subject},\n  journal = {Journal of Interesting Results},\n  year = {2026},\n  volume = {42},\n  pages = {100-120}\n}`;
+            await writeFileInDir(refDir, 'references.bib', bibContent);
+          } catch (createErr) {
+            console.error("Failed to automatically create references folder on open:", createErr);
+          }
+        }
+      }
     } catch (e) {
       // No metadata file exists - ask user if they want to create one
       const shouldCreate = window.confirm(
@@ -672,31 +725,15 @@ function App() {
       // Strategy based on mode
       const mode = loadedMeta.mode || 'researcher';
 
-      if (mode === 'researcher') {
-        mdFile = await dir.getFileHandle('main.md');
-        mdFileName = 'main.md';
-      } else if (mode === 'journalist') {
-        mdFile = await dir.getFileHandle('notes.md');
-        mdFileName = 'notes.md';
-      } else if (mode === 'engineer') {
-        mdFile = await dir.getFileHandle('report.md');
-        mdFileName = 'report.md';
-      } else if (mode === 'scriptwriter') {
-        mdFile = await dir.getFileHandle('script.md');
-        mdFileName = 'script.md';
-      } else if (mode === 'scholar') {
-        // Deep search for todo.md in 'me' folder
+      if (mode === 'scholar') {
         try {
-          const meDir = await dir.getDirectoryHandle('me');
-          mdFile = await meDir.getFileHandle('todo.md');
-          mdFileName = 'me/todo.md';
+          const lecturesDir = await dir.getDirectoryHandle('lectures');
+          mdFile = await lecturesDir.getFileHandle('lecture_1.md');
+          mdFileName = 'lectures/lecture_1.md';
         } catch {
           // Fallback
         }
-      }
-
-      // Universal fallback: check main.md explicitly if mode logic failed
-      if (!mdFile) {
+      } else {
         mdFile = await dir.getFileHandle('main.md');
         mdFileName = 'main.md';
       }
@@ -781,6 +818,27 @@ function App() {
       if (dirHandle) {
         await writeFileInDir(dirHandle, 'project_metadata.json', JSON.stringify(projectMetadata, null, 2));
 
+        // Ensure references folder exists if in a references-supporting mode and references are enabled
+        const isReferencesMode = mode === 'researcher' || mode === 'engineer' || mode === 'scholar';
+        const enableReferences = projectMetadata?.enableReferences !== false;
+        if (isReferencesMode && enableReferences) {
+          try {
+            await dirHandle.getDirectoryHandle('references');
+          } catch (e) {
+            // Folder doesn't exist, create it and a default bib file if references are checked or showReferences is active
+            const showReferences = metadata?.useReferences ?? metadata?.showReferences;
+            if (showReferences) {
+              try {
+                const refDir = await createSubDir(dirHandle, 'references');
+                const bibContent = `@article{example2026,\n  author = {Author, An},\n  title = {A seminal work on the subject},\n  journal = {Journal of Interesting Results},\n  year = {2026},\n  volume = {42},\n  pages = {100-120}\n}`;
+                await writeFileInDir(refDir, 'references.bib', bibContent);
+              } catch (createErr) {
+                console.error("Failed to automatically create references folder on save:", createErr);
+              }
+            }
+          }
+        }
+
         if (currentFile.handle) {
           await saveFile(fullContent, currentFile.handle);
         } else {
@@ -857,12 +915,17 @@ function App() {
   };
 
   const removeRecentProject = async (projToRemove) => {
-    const updated = recentProjects.filter(p => p.name !== projToRemove.name);
+    const updated = recentProjects.filter(p => {
+      if (projToRemove.path && p.path) {
+        return !(p.name === projToRemove.name && p.path === projToRemove.path);
+      }
+      return p.name !== projToRemove.name;
+    });
     setRecentProjects(updated);
     await saveRecentList(updated);
   };
 
-  const createProject = async (name, newMode, useTemplate = true) => {
+  const createProject = async (name, newMode, initializeEmpty = false) => {
     // AUTOSAVE BEFORE SWITCHING
     if (isDirty) await handleSave();
 
@@ -902,101 +965,118 @@ function App() {
       let mainFileHandle = null;
       let mainFileName = '';
 
-      if (useTemplate) {
+      if (initializeEmpty) {
+        // Create only project_metadata.json and main.md
+        const defaultContent = `---\ntitle: ${safeName}\ndate: ${new Date().toLocaleDateString()}\n---\n\n# ${safeName}\n\n`;
+        mainFileHandle = await writeFileInDir(projectDir, 'main.md', defaultContent);
+        mainFileName = 'main.md';
+      } else {
         switch (newMode) {
-          case 'journalist':
+          case 'journalist': {
             await createSubDir(projectDir, 'figures');
-            const draftsDir = await createSubDir(projectDir, 'Drafts');
-            const interviewsDir = await createSubDir(projectDir, 'Interviews');
+            const notesDir = await createSubDir(projectDir, 'notes');
+            const ideasDir = await createSubDir(projectDir, 'ideas');
 
-            const journalBoilerplate = (title, author, profession) => `---\ntitle: ${title}\nsubtitle: Lead Paragraph...\njournalist: ${author || 'Journalist'}\nprofession: ${profession || 'Press Reporter'}\nemail: ${settings.email || ''}\nphone: ${settings.phone || ''}\ndate: ${new Date().toISOString().split('T')[0]}\nsource: |\n  Source Details\n  Affiliation\n---\n\n# ${title}\n\n[Location / Dateline]\n\nWrite your press article or report here...`;
+            const journalBoilerplate = `---\ntitle: ${safeName}\nsubtitle: Lead Paragraph...\nauthor: ${settings.name || 'Journalist'}\nprofession: ${settings.profession || 'Press Reporter'}\nemail: ${settings.email || ''}\nphone: ${settings.phone || ''}\ndate: ${new Date().toISOString().split('T')[0]}\n---\n\n# ${safeName}\n\n[Location / Dateline]\n\nWrite your press article or report here...`;
+            const noteBoilerplate = `---\ntitle: Research & Sources\ntags:\n  - journalist\n  - notes\ncolor: "#339af0"\nlinks: []\n---\n\n# Research & Sources\n\nKeep track of interviews, background material, and investigative leads here.`;
+            const ideaBoilerplate = `---\ntitle: Article Ideas\ntags:\n  - ideas\n  - brainstorming\n---\n\n# Article Ideas\n\nCollect angles, headlines, and narrative arcs for future pieces.`;
 
-            await writeFileInDir(draftsDir, 'Draft_1.md', journalBoilerplate('Article Draft 1', settings.name, settings.profession));
-            await writeFileInDir(interviewsDir, 'Interview_Record.md', journalBoilerplate('Interview Notes', settings.name, settings.profession));
-
-            const notesHandle = await writeFileInDir(projectDir, 'notes.md', `# Notes: ${safeName}\n\nKey points...`);
-            mainFileHandle = notesHandle; // Open notes.md by default
-            mainFileName = 'notes.md';
+            await writeFileInDir(notesDir, 'note_1.md', noteBoilerplate);
+            await writeFileInDir(ideasDir, 'ideas_1.md', ideaBoilerplate);
+            mainFileHandle = await writeFileInDir(projectDir, 'main.md', journalBoilerplate);
+            mainFileName = 'main.md';
             break;
+          }
 
-          case 'engineer':
-            const engBoilerplate = (title) => `---\ntitle: ${title}\nproject: ${safeName}\ndate: ${new Date().toISOString().split('T')[0]}\nauthors:\n  - name: ${settings.name || 'Engineer'}\n    affiliation: ${settings.affiliation || ''}\n---\n\n# ${title}\n\nTechnical details and analysis for ${safeName}.`;
-
-            const expDirEng = await createSubDir(projectDir, '1_Exposure_Model');
-            const hazDirEng = await createSubDir(projectDir, '2_Hazard_Model');
-            const vulDirEng = await createSubDir(projectDir, '3_Vulnerability_Model');
+          case 'engineer': {
             await createSubDir(projectDir, 'figures');
+            const notesDir = await createSubDir(projectDir, 'notes');
+            const ideasDir = await createSubDir(projectDir, 'ideas');
+            const refDir = await createSubDir(projectDir, 'references');
 
-            mainFileHandle = await writeFileInDir(expDirEng, 'Exposure_Analysis.md', engBoilerplate('Exposure Model'));
-            await writeFileInDir(hazDirEng, 'Hazard_Analysis.md', engBoilerplate('Hazard Model'));
-            await writeFileInDir(vulDirEng, 'Vulnerability_Analysis.md', engBoilerplate('Vulnerability Model'));
+            const engBoilerplate = `---\ntitle: ${safeName}\nproject: ${safeName}\ndate: ${new Date().toISOString().split('T')[0]}\nauthors:\n  - name: ${settings.name || 'Engineer'}\n    affiliation: ${settings.affiliation || ''}\nclient: Client Name\nprojectNumber: ENG-2026-001\nrevision: Rev 0\nshowToC: true\n---\n\n# Executive Summary\n\nThis technical report provides the structural details and calculations for ${safeName}.\n\n# Design Criteria\n\nState the design assumptions, standards, and safety factors.\n\n# Results and Recommendations\n\nProvide a summary of the analysis and action items.`;
+            const noteBoilerplate = `---\ntitle: Site Inspection Notes\ntags:\n  - engineer\n  - calculations\ncolor: "#20c997"\nlinks: []\n---\n\n# Site Inspection Notes\n\nRecord physical observations, parameter values, and calculation checks here.`;
+            const ideaBoilerplate = `---\ntitle: Engineering Solutions\ntags:\n  - ideas\n  - optimization\n---\n\n# Engineering Solutions\n\nBrainstorm structural alternatives, optimization opportunities, and design strategies.`;
+            const bibContent = `@article{example2026,\n  author = {Author, An},\n  title = {A seminal work on the subject},\n  journal = {Journal of Interesting Results},\n  year = {2026},\n  volume = {42},\n  pages = {100-120}\n}`;
 
-            mainFileName = '1_Exposure_Model/Exposure_Analysis.md';
+            await writeFileInDir(notesDir, 'note_1.md', noteBoilerplate);
+            await writeFileInDir(ideasDir, 'ideas_1.md', ideaBoilerplate);
+            await writeFileInDir(refDir, 'references.bib', bibContent);
+            mainFileHandle = await writeFileInDir(projectDir, 'main.md', engBoilerplate);
+            mainFileName = 'main.md';
             break;
+          }
 
-          case 'scholar':
-            const lectureNotesDir = await createSubDir(projectDir, 'Lecture Notes');
-            const assignmentsDir = await createSubDir(projectDir, 'Assignments');
-            const projectsDir = await createSubDir(projectDir, 'Projects');
-            const resourcesDir = await createSubDir(projectDir, 'Resources');
+          case 'scholar': {
+            await createSubDir(projectDir, 'figures');
+            const notesDir = await createSubDir(projectDir, 'notes');
+            const ideasDir = await createSubDir(projectDir, 'ideas');
+            const lecturesDir = await createSubDir(projectDir, 'lectures');
+            const refDir = await createSubDir(projectDir, 'references');
 
-            const scholarBoilerplate = (lectureName) => `---\ntitle: ${lectureName}\ncourse: ${safeName}\ndate: ${new Date().toLocaleDateString()}\nauthor: ${settings.name || 'Student Name'}\nshowCover: true\nobjectives:\n  - Objective 1\n  - Objective 2\n---\n\n# ${lectureName}\n\n**Date:** ${new Date().toLocaleDateString()}\n\n## Summary\n[Replace this with a brief summary of today's lecture]\n\n## Lecture Notes\n[Write your notes here...]\n\n## Important Definitions\n- **Term 1**: Definition...\n\n## Action Items / Homework\n- [ ] Task 1`;
+            const lecture1Boilerplate = `---\ntitle: Lecture 1: Introduction\ncourse: ${safeName}\ndate: ${new Date().toLocaleDateString()}\nauthor: ${settings.name || 'Student Name'}\nshowCover: true\nobjectives:\n  - Understand the course scope\n  - Identify key syllabus items\n---\n\n# Lecture 1: Introduction\n\n**Date:** ${new Date().toLocaleDateString()}\n\n## Summary\nToday we introduced the course goals, reviewed the grading guidelines, and discussed the main themes.\n\n## Lecture Notes\n- Course covers advanced techniques in writing and analysis.\n- Review schedule and office hours.\n\n## Action Items / Homework\n- [ ] Complete the introduction survey`;
 
-            const lecture1Handle = await writeFileInDir(lectureNotesDir, 'Lecture1.md', scholarBoilerplate('Lecture 1'));
-            await writeFileInDir(lectureNotesDir, 'Lecture2.md', scholarBoilerplate('Lecture 2'));
-            const todoHandle = await writeFileInDir(projectDir, 'TODO.md', `---\ntitle: TO DO List\nauthor: ${settings.name || 'Student Name'}\ndate: ${new Date().toLocaleDateString()}\n---\n\n# TASKS: ${safeName}\n\n## High Priority\n- [ ] \n\n## Upcoming Deadlines\n- [ ] \n\n## Study Plan\n- [ ] `);
-            await writeFileInDir(projectDir, 'syllabus.md', `# Syllabus: ${safeName}\n\n## Course Information\n...\n\n## Schedule\n...`);
+            const lecture2Boilerplate = `---\ntitle: Lecture 2: Core Principles\ncourse: ${safeName}\ndate: ${new Date().toLocaleDateString()}\nauthor: ${settings.name || 'Student Name'}\nshowCover: true\nobjectives:\n  - Define core terms\n  - Explore the conceptual model\n---\n\n# Lecture 2: Core Principles\n\n**Date:** ${new Date().toLocaleDateString()}\n\n## Summary\nWe discussed the theoretical definitions and established the fundamental guidelines.\n\n## Lecture Notes\n- **Theory A**: Basic description.\n- Recommended reading: Chapters 1 and 2.\n\n## Action Items / Homework\n- [ ] Review lecture slides`;
 
-            mainFileHandle = lecture1Handle;
-            mainFileName = 'Lecture Notes/Lecture1.md';
+            const noteBoilerplate = `---\ntitle: Study Group Notes\ntags:\n  - scholar\n  - study\ncolor: "#fcc419"\nlinks: []\n---\n\n# Study Group Notes\n\nSummarize key topics from discussions with peers and preparation for exams.`;
+            const ideaBoilerplate = `---\ntitle: Essay & Project Ideas\ntags:\n  - ideas\n  - term-paper\n---\n\n# Essay & Project Ideas\n\nBrainstorm topics for term papers, presentation outlines, and group projects.`;
+            const bibContent = `@article{example2026,\n  author = {Author, An},\n  title = {A seminal work on the subject},\n  journal = {Journal of Interesting Results},\n  year = {2026},\n  volume = {42},\n  pages = {100-120}\n}`;
+
+            await writeFileInDir(notesDir, 'note_1.md', noteBoilerplate);
+            await writeFileInDir(ideasDir, 'ideas_1.md', ideaBoilerplate);
+            await writeFileInDir(refDir, 'references.bib', bibContent);
+            mainFileHandle = await writeFileInDir(lecturesDir, 'lecture_1.md', lecture1Boilerplate);
+            await writeFileInDir(lecturesDir, 'lecture_2.md', lecture2Boilerplate);
+            mainFileName = 'lectures/lecture_1.md';
             break;
+          }
 
-          case 'scriptwriter':
-            const scriptBoilerplate = `---\ntitle: ${safeName}\nauthor: Writer Name\nbasedOn: \ndate: ${new Date().toLocaleDateString()}\ncontact: |\n  Agent Name\n  Agency Name\n  Phone / Email\n---\n\n# PRELUDE\n[ACTION, LOCATION, ATMOSPHERE]\n\n**CHARACTER NAME**\n(Parenthetical)\nDialogue\n\n**CHARACTER NAME 2**\nDialogue \n\n---\n\n# SCENE 1\n\n...\n\n---\n\n# SCENE 2\n...\n\n---\n\n# THE END`;
-            const scriptHandle = await writeFileInDir(projectDir, 'script.md', scriptBoilerplate);
-            mainFileHandle = scriptHandle;
-            mainFileName = 'script.md';
+          case 'scriptwriter': {
+            await createSubDir(projectDir, 'figures');
+            const notesDir = await createSubDir(projectDir, 'notes');
+            const ideasDir = await createSubDir(projectDir, 'ideas');
+
+            const scriptBoilerplate = `---\ntitle: ${safeName}\nauthor: ${settings.name || 'Screenwriter'}\nbasedOn: \ndate: ${new Date().toLocaleDateString()}\ncontact: |\n  ${settings.name || 'Screenwriter'}\n  ${settings.email || ''}\n  ${settings.phone || ''}\n---\n\n# PRELUDE\n\n[ACTION, LOCATION, ATMOSPHERE]\n\n**CHARACTER NAME**\n(Parenthetical)\nDialogue\n\n**CHARACTER NAME 2**\nDialogue \n\n---\n\n# SCENE 1\n\n...\n\n---\n\n# THE END`;
+            const noteBoilerplate = `---\ntitle: Character Biographies\ntags:\n  - script\n  - characters\ncolor: "#f06595"\nlinks: []\n---\n\n# Character Biographies\n\nDefine key character arcs, motivations, backstory details, and personality traits.`;
+            const ideaBoilerplate = `---\ntitle: Plot & Scene Beats\ntags:\n  - ideas\n  - structure\n---\n\n# Plot & Scene Beats\n\nBrainstorm story outline, key twists, pacing details, and thematic resolution points.`;
+
+            await writeFileInDir(notesDir, 'note_1.md', noteBoilerplate);
+            await writeFileInDir(ideasDir, 'ideas_1.md', ideaBoilerplate);
+            mainFileHandle = await writeFileInDir(projectDir, 'main.md', scriptBoilerplate);
+            mainFileName = 'main.md';
             break;
+          }
 
           case 'researcher':
-          default:
-            const resBoilerplate = (stage) => `---\ntitle: ${stage}\nproject: ${safeName}\nauthor: ${settings.name || 'Researcher'}\ndate: ${new Date().toLocaleDateString()}\n---\n\n# ${stage}\n\nDescription of the ${stage.toLowerCase()} for the Seismic Risk Analysis of ${safeName}.`;
-
-            const expDir = await createSubDir(projectDir, '1_Exposure_Model');
-            const hazDir = await createSubDir(projectDir, '2_Hazard_Model');
-            const vulDir = await createSubDir(projectDir, '3_Vulnerability_Model');
-            const lossDir = await createSubDir(projectDir, '4_Loss_Estimation');
+          default: {
             await createSubDir(projectDir, 'figures');
+            const notesDir = await createSubDir(projectDir, 'notes');
+            const ideasDir = await createSubDir(projectDir, 'ideas');
+            const refDir = await createSubDir(projectDir, 'references');
 
-            mainFileHandle = await writeFileInDir(expDir, 'Exposure_Characterization.md', resBoilerplate('Exposure Model'));
-            await writeFileInDir(hazDir, 'Hazard_Definition.md', resBoilerplate('Hazard Model'));
-            await writeFileInDir(vulDir, 'Fragility_Curves.md', resBoilerplate('Vulnerability Model'));
-            await writeFileInDir(lossDir, 'Loss_Analysis.md', resBoilerplate('Loss Estimation'));
-            await writeFileInDir(projectDir, 'references.bib', '');
+            const resBoilerplate = `---\ntitle: ${safeName}\nproject: ${safeName}\nauthors:\n  - name: ${settings.name || 'Researcher'}\n    affiliation: ${settings.affiliation || ''}\n    email: ${settings.email || ''}\ndate: ${new Date().toLocaleDateString()}\nabstract: |\n  This is the abstract for the research project. It should summarize the background, methodology, results, and conclusions of the paper.\n---\n\n# Introduction\n\nProvide an introduction to your research here.\n\n## Methodology\n\nDescribe your research methods.\n\n## Results\n\nPresent your findings and reference figures.\n\n## Discussion\n\nInterpret your results and link to the literature.`;
+            const noteBoilerplate = `---\ntitle: Literature Review Notes\ntags:\n  - researcher\n  - literature\ncolor: "#845ef7"\nlinks: []\n---\n\n# Literature Review Notes\n\nSummarize key findings, citations, and conceptual definitions from your reference library.`;
+            const ideaBoilerplate = `---\ntitle: Research Hypotheses\ntags:\n  - ideas\n  - hypotheses\n---\n\n# Research Hypotheses\n\nDocument future research directions, speculative ideas, and tentative explanations here.`;
+            const bibContent = `@article{example2026,\n  author = {Author, An},\n  title = {A seminal work on the subject},\n  journal = {Journal of Interesting Results},\n  year = {2026},\n  volume = {42},\n  pages = {100-120}\n}`;
 
-            mainFileName = '1_Exposure_Model/Exposure_Characterization.md';
+            await writeFileInDir(notesDir, 'note_1.md', noteBoilerplate);
+            await writeFileInDir(ideasDir, 'ideas_1.md', ideaBoilerplate);
+            await writeFileInDir(refDir, 'references.bib', bibContent);
+            mainFileHandle = await writeFileInDir(projectDir, 'main.md', resBoilerplate);
+            mainFileName = 'main.md';
             break;
+          }
         }
+      }
 
-        if (mainFileHandle) {
-          const fileData = await readFile(mainFileHandle);
-          setFileHandle(mainFileHandle);
-          parseFileContent(fileData.text, mainFileName);
-          setCurrentFile({ name: mainFileName, kind: 'md', handle: mainFileHandle });
-        } else {
-          // Fallback if no file created (scolar might be tricky if I don't set one)
-          await openDirectoryWithHandle(projectDir);
-        }
-
+      if (mainFileHandle) {
+        const fileData = await readFile(mainFileHandle);
+        setFileHandle(mainFileHandle);
+        parseFileContent(fileData.text, mainFileName);
+        setCurrentFile({ name: mainFileName, kind: 'md', handle: mainFileHandle });
       } else {
-        // Empty project - still ensure we open the directory
-        setProjectMetadata(metadata);
-        setContent('');
-        setPreviewContent('');
-        setMetadata({});
-        setCurrentFile({ name: 'Untitled', kind: 'md', handle: null });
-        // Make sure the FileExplorer can see the project root even if empty
-        setDirHandle(projectDir);
+        // Fallback if no file created (scholar might be tricky if I don't set one)
+        await openDirectoryWithHandle(projectDir);
       }
 
       // 4. Open
@@ -1010,25 +1090,116 @@ function App() {
     }
   };
 
+  // Open PDF export modal - show file picker
   const handleExport = async () => {
-    const latex = generateLatex(content, metadata);
-    const name = (currentFile.name || 'export').replace(/\.md$/, '') + '.tex';
-    if (mode === 'researcher' && dirHandle) {
-      try {
-        const handle = await dirHandle.getFileHandle(name, { create: true });
-        const writable = await handle.createWritable();
-        await writable.write(latex);
-        await writable.close();
-        alert('Exported to ' + name);
-        setRefreshTrigger(prev => prev + 1);
-      } catch (e) {
-        console.error(e);
-        alert('Failed to export');
-      }
-    } else {
-      await saveFileAs(latex);
+    if (!dirHandle) {
+      alert('Please open a project first to use PDF export.');
+      return;
     }
+    setShowPdfModal(true);
   };
+
+  // Called when user confirms a file in the PdfExportModal
+  const handlePdfExport = async (selectedFile) => {
+    setShowPdfModal(false);
+    setIsLoading(true);
+    try {
+      const file = await selectedFile.handle.getFile();
+      const text = await file.text();
+
+      // Parse frontmatter
+      let fileContent = text;
+      let fileMeta = {};
+      if (text.trim().startsWith('---')) {
+        const parts = text.split('---');
+        if (parts.length >= 3) {
+          try { fileMeta = yaml.load(parts[1]) || {}; } catch (e) { /* ignore */ }
+          fileContent = parts.slice(2).join('---');
+        }
+      }
+
+      setPrintData({ 
+        content: fileContent, 
+        metadata: fileMeta, 
+        filename: selectedFile.name.replace(/\.md$/, '.pdf') 
+      });
+      setPrintMode(true);
+    } catch (e) {
+      console.error('PDF Export Error', e);
+      alert('Failed to prepare file for export: ' + (e.message || e));
+      setIsLoading(false);
+    }
+    // Note: Do not setIsLoading(false) here if successful, because the useEffect will take over and hide loading when done.
+  };
+
+  // Trigger print when printMode becomes true, restore after
+  useEffect(() => {
+    if (!printMode) return;
+    
+    // Wait one render cycle so the print Preview has mounted
+    const timer = setTimeout(() => {
+      const element = document.getElementById('feder-print-root');
+      if (!element) {
+        setPrintMode(false);
+        setIsLoading(false);
+        return;
+      }
+
+      // Temporarily override styles if needed so html2pdf can render it
+      // html2pdf clones the element, so as long as it's visible in the DOM it works.
+      // But because our CSS hides it except @media print, we must force it visible briefly
+      // or ensure html2pdf is fine with it (html2pdf actually renders what's on screen).
+      // Let's force it visible for the render.
+      const prevDisplay = element.style.display;
+      const prevPosition = element.style.position;
+      const prevVisibility = element.style.visibility;
+      const prevHeight = element.style.height;
+      const prevOverflow = element.style.overflow;
+
+      element.style.display = 'block';
+      element.style.position = 'absolute';
+      element.style.visibility = 'visible'; // Keep it visible but out of way
+      element.style.top = '-9999px';
+      element.style.left = '-9999px';
+      element.style.height = 'auto';
+      element.style.overflow = 'visible';
+
+      html2pdf()
+        .from(element)
+        .set({
+          margin: 15,
+          filename: printData.filename || 'export.pdf',
+          image: { type: 'jpeg', quality: 0.98 },
+          html2canvas: { scale: 2, useCORS: true, logging: false },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        })
+        .save()
+        .then(() => {
+          element.style.display = prevDisplay;
+          element.style.position = prevPosition;
+          element.style.visibility = prevVisibility;
+          element.style.height = prevHeight;
+          element.style.overflow = prevOverflow;
+          
+          setPrintMode(false);
+          setIsLoading(false);
+        })
+        .catch(err => {
+          console.error("PDF generation failed", err);
+          element.style.display = prevDisplay;
+          element.style.position = prevPosition;
+          element.style.visibility = prevVisibility;
+          element.style.height = prevHeight;
+          element.style.overflow = prevOverflow;
+
+          setPrintMode(false);
+          setIsLoading(false);
+          alert("PDF Export failed");
+        });
+    }, 500);
+    
+    return () => clearTimeout(timer);
+  }, [printMode, printData.filename]);
 
   const handleImport = async () => {
     try {
@@ -1440,11 +1611,13 @@ function App() {
       onCreateFile={handleCreateFile}
       onCreateFolder={handleCreateFolder}
       refreshTrigger={refreshTrigger}
+      onRefresh={() => setRefreshTrigger(prev => prev + 1)}
       initialExpandedFolders={(projectMetadata.explorerState && projectMetadata.explorerState.expandedFolders) || {}}
       onExplorerStateChange={handleExplorerStateChange}
       onMove={handleMove}
       customOrder={projectMetadata.explorerOrder || {}}
       onOrderChange={handleOrderChange}
+      projectMetadata={projectMetadata}
     />
   );
 
@@ -1462,7 +1635,9 @@ function App() {
           isNote={currentFile.name && (currentFile.name.startsWith('notes/') || currentFile.name.includes('/notes/'))}
           isIdea={currentFile.name && (currentFile.name.startsWith('ideas/') || currentFile.name.includes('/ideas/'))}
           notesList={notesList || []}
+          bibFiles={bibFiles || []}
           currentFilename={currentFile.name}
+          projectMetadata={projectMetadata}
         />
       )}
 
@@ -1528,6 +1703,7 @@ function App() {
       // Notes Graph
       hasNotesDir={hasNotesDir}
       notesList={notesList}
+      bibFiles={bibFiles}
       onFileSelect={handleFileSelect}
       currentFilename={currentFile.name}
 
@@ -1546,6 +1722,53 @@ function App() {
         <div className="loading-overlay">
           <div className="spinner"></div>
           Loading...
+        </div>
+      )}
+
+      {/* PDF Export Modal */}
+      {showPdfModal && (
+        <PdfExportModal
+          dirHandle={dirHandle}
+          mode={mode}
+          onExport={handlePdfExport}
+          onClose={() => setShowPdfModal(false)}
+        />
+      )}
+
+      {/* Hidden Print Preview — rendered off-screen, shown only by @media print */}
+      {printMode && (
+        <div id="feder-print-root">
+          <Preview
+            settings={settings}
+            content={printData.content}
+            metadata={printData.metadata}
+            projectMetadata={projectMetadata}
+            dirHandle={dirHandle}
+            mode={mode}
+            paperView={true}
+            onUpdateContent={() => {}}
+            onUpdateMetadata={() => {}}
+            activeTab="visualization"
+            onTabChange={() => {}}
+            improvementData={{ status: 'idle', originalText: '', improvedText: '', type: '', error: null }}
+            onApplyImprovement={() => {}}
+            onRetryImprovement={() => {}}
+            editorSelection=""
+            onAddComment={() => {}}
+            onReplyComment={() => {}}
+            onResolveComment={() => {}}
+            onDeleteComment={() => {}}
+            commentPositions={[]}
+            editorScrollTop={0}
+            hasNotesDir={false}
+            notesList={[]}
+            onFileSelect={() => {}}
+            currentFilename=""
+            hasIdeasDir={false}
+            isEditingNote={false}
+            isEditingIdea={false}
+            currentFileContent=""
+          />
         </div>
       )}
 
@@ -1621,6 +1844,8 @@ function App() {
               wordCount={content ? content.trim().split(/\s+/).filter(w => w).length : 0}
               paperView={paperView}
               onTogglePaperView={() => setPaperView(!paperView)}
+              previewFont={projectMetadata?.previewFont}
+              onFontChange={(font) => handleUpdateProjectSettings({ ...projectMetadata, previewFont: font })}
             />
 
           }

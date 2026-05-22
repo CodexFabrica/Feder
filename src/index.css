@@ -284,7 +284,8 @@ body.is-desktop .app-layout {
 }
 
 .explorer-bottom-header .explorer-actions {
-  opacity: 0.75;
+  opacity: 0;
+  transition: opacity 0.2s;
 }
 
 .explorer-bottom-header:hover .explorer-actions {
@@ -514,6 +515,9 @@ input:checked+.slider:before {
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border-color);
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 55vh;
 }
 
 .metadata-header {
@@ -547,6 +551,8 @@ input:checked+.slider:before {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 12px;
+  overflow-y: auto;
+  flex: 1;
 }
 
 .form-group.full-width {

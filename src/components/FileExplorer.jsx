@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Folder, FileText, ChevronRight, ChevronDown, Image as ImageIcon, FileJson, ExternalLink, FilePlus, FolderPlus, Edit2, Check, X, Trash2 } from 'lucide-react';
+import { Folder, FileText, ChevronRight, ChevronDown, Image as ImageIcon, FileJson, ExternalLink, FilePlus, FolderPlus, Edit2, Check, X, Trash2, Plus } from 'lucide-react';
+import { FiguresUploadModal } from './FiguresUploadModal';
+import { ReferencesUploadModal } from './ReferencesUploadModal';
 
 const SPECIAL_SECTIONS = [
     { key: 'notes', label: 'NOTES' },
@@ -19,12 +21,25 @@ export function FileExplorer({
     onCreateFile,
     onCreateFolder,
     refreshTrigger,
+    onRefresh,
     initialExpandedFolders = {},
     onExplorerStateChange,
     onMove,
     customOrder = {},
-    onOrderChange
+    onOrderChange,
+    projectMetadata
 }) {
+    const activeSpecialSections = useMemo(() => {
+        const enableReferences = projectMetadata?.enableReferences !== false;
+        const isReferencesMode = mode === 'researcher' || mode === 'engineer' || mode === 'scholar';
+        return SPECIAL_SECTIONS.filter(section => {
+            if (section.key === 'references') {
+                return enableReferences && isReferencesMode;
+            }
+            return true;
+        });
+    }, [mode, projectMetadata?.enableReferences]);
+
     const [files, setFiles] = useState([]);
     const [expandedFolders, setExpandedFolders] = useState(initialExpandedFolders);
     const [editingPath, setEditingPath] = useState(null);
@@ -38,6 +53,10 @@ export function FileExplorer({
         figures: true,
         references: true
     });
+    const [showUploadModal, setShowUploadModal] = useState(false);
+    const [uploadFolderHandle, setUploadFolderHandle] = useState(null);
+    const [showReferencesModal, setShowReferencesModal] = useState(false);
+    const [referencesFolderHandle, setReferencesFolderHandle] = useState(null);
 
     // Sync expanded state when initial prop changes (usually on project open)
     useEffect(() => {
@@ -162,11 +181,23 @@ export function FileExplorer({
         }
     };
 
-    // Mock open in OS file explorer
-    const openInExplorer = () => {
+    // Open in OS file explorer
+    const openInExplorer = async () => {
         if (!dirHandle) return;
 
-        // Try to write to clipboard
+        if (window.electronAPI && window.electronAPI.isElectron) {
+            const targetPath = dirHandle.path;
+            if (targetPath) {
+                try {
+                    await window.electronAPI.openPath(targetPath);
+                    return;
+                } catch (err) {
+                    console.error("Failed to open path natively in OS explorer", err);
+                }
+            }
+        }
+
+        // Fallback for browser mode
         navigator.clipboard.writeText(dirHandle.name).then(() => {
             alert(`Copied path identifier to clipboard: "${dirHandle.name}"\n\n(Browser security prevents directly opening Windows Explorer. You can paste this in your file manager.)`);
         }, () => {
@@ -175,7 +206,7 @@ export function FileExplorer({
     };
 
     const { mainFiles, specialFolders } = useMemo(() => {
-        const sectionsByName = Object.fromEntries(SPECIAL_SECTIONS.map(section => [section.key, null]));
+        const sectionsByName = Object.fromEntries(activeSpecialSections.map(section => [section.key, null]));
         const regular = [];
 
         for (const node of files) {
@@ -187,7 +218,7 @@ export function FileExplorer({
         }
 
         return { mainFiles: regular, specialFolders: sectionsByName };
-    }, [files]);
+    }, [files, activeSpecialSections]);
 
     const toggleBottomSection = (section) => {
         setBottomSectionsOpen((prev) => ({
@@ -414,8 +445,13 @@ export function FileExplorer({
 
             if (node.kind === 'file') {
                 if (node.name === 'project_metadata.json') return null;
-                const inReferencesFolder = path.toLowerCase().startsWith('/references/');
-                if (node.name.endsWith('.bib') && mode !== 'researcher' && !inReferencesFolder) return null;
+                const enableReferences = projectMetadata?.enableReferences !== false;
+                const isReferencesMode = mode === 'researcher' || mode === 'engineer' || mode === 'scholar';
+                if (node.name.endsWith('.bib')) {
+                    if (!enableReferences || !isReferencesMode) {
+                        return null;
+                    }
+                }
             }
 
             const isExpanded = expandedFolders[path];
@@ -617,9 +653,9 @@ export function FileExplorer({
                     {renderTree(mainFiles)}
                 </div>
 
-                {SPECIAL_SECTIONS.some((section) => !!specialFolders[section.key]) && (
+                {activeSpecialSections.some((section) => !!specialFolders[section.key]) && (
                     <div className="explorer-bottom-sections">
-                        {SPECIAL_SECTIONS.map((section) => {
+                        {activeSpecialSections.map((section) => {
                             const folderNode = specialFolders[section.key];
                             if (!folderNode) return null;
 
@@ -635,13 +671,39 @@ export function FileExplorer({
                                             <span>{section.label}</span>
                                         </button>
                                         <div className="explorer-actions" onClick={(e) => e.stopPropagation()}>
-                                            <button
-                                                className="btn-icon small"
-                                                title={`New File in ${folderNode.name}`}
-                                                onClick={() => handleCreateFileInFolder(folderNode.handle, `/${folderNode.name}`, section.key === 'references' ? 'references.bib' : 'newfile.md')}
-                                            >
-                                                <FilePlus size={12} />
-                                            </button>
+                                            {section.key === 'figures' && (
+                                                <button
+                                                    className="btn-icon small"
+                                                    title="Upload Image/File"
+                                                    onClick={() => {
+                                                        setUploadFolderHandle(folderNode.handle);
+                                                        setShowUploadModal(true);
+                                                    }}
+                                                >
+                                                    <Plus size={12} />
+                                                </button>
+                                            )}
+                                            {section.key === 'references' && (
+                                                <button
+                                                    className="btn-icon small"
+                                                    title="Add BibTeX Reference(s)"
+                                                    onClick={() => {
+                                                        setReferencesFolderHandle(folderNode.handle);
+                                                        setShowReferencesModal(true);
+                                                    }}
+                                                >
+                                                    <Plus size={12} />
+                                                </button>
+                                            )}
+                                            {section.key !== 'figures' && (
+                                                <button
+                                                    className="btn-icon small"
+                                                    title={`New File in ${folderNode.name}`}
+                                                    onClick={() => handleCreateFileInFolder(folderNode.handle, `/${folderNode.name}`, section.key === 'references' ? 'references.bib' : 'newfile.md')}
+                                                >
+                                                    <FilePlus size={12} />
+                                                </button>
+                                            )}
                                             <button
                                                 className="btn-icon small"
                                                 title={`New Folder in ${folderNode.name}`}
@@ -663,6 +725,26 @@ export function FileExplorer({
                     </div>
                 )}
             </div>
+            {showUploadModal && (
+                <FiguresUploadModal
+                    dirHandle={uploadFolderHandle}
+                    onClose={() => setShowUploadModal(false)}
+                    onUploadSuccess={() => {
+                        setShowUploadModal(false);
+                        onRefresh?.();
+                    }}
+                />
+            )}
+            {showReferencesModal && (
+                <ReferencesUploadModal
+                    dirHandle={referencesFolderHandle}
+                    onClose={() => setShowReferencesModal(false)}
+                    onUploadSuccess={() => {
+                        setShowReferencesModal(false);
+                        onRefresh?.();
+                    }}
+                />
+            )}
         </div>
     );
 }

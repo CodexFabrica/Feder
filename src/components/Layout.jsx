@@ -1,5 +1,5 @@
-import React from 'react';
-import { Moon, Sun, Save, FolderOpen, FilePlus, Download, Sidebar, Feather, Settings, SunMoon, FileJson } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Moon, Sun, Save, FolderOpen, FilePlus, Download, Sidebar, Feather, Settings, SunMoon, FileJson, ChevronDown } from 'lucide-react';
 
 export function Layout({
     children,
@@ -25,10 +25,24 @@ export function Layout({
     statusBar
 }) {
     const [fileNameInput, setFileNameInput] = React.useState(filename || '');
+    const [fileMenuOpen, setFileMenuOpen] = useState(false);
+    const fileMenuRef = useRef(null);
 
     React.useEffect(() => {
         setFileNameInput(filename || '');
     }, [filename]);
+
+    // Close file menu when clicking outside
+    useEffect(() => {
+        if (!fileMenuOpen) return;
+        const handleClickOutside = (e) => {
+            if (fileMenuRef.current && !fileMenuRef.current.contains(e.target)) {
+                setFileMenuOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [fileMenuOpen]);
 
     return (
         <div className={`app-layout ${theme !== 'light' ? theme : ''}`}>
@@ -113,15 +127,63 @@ export function Layout({
                 </div>
 
                 <div className="actions-group">
-                    <ActionButton onClick={onNew} icon={<FilePlus size={18} />} label="New" />
-                    <ActionButton onClick={onOpen} icon={<FolderOpen size={18} />} label="Open" />
-                    <ActionButton onClick={onSave} icon={<Save size={18} />} label="Save" />
-                    {mode === 'researcher' && (
-                        <>
-                            <ActionButton onClick={onExport} icon={<Download size={18} />} label="Export" />
-                            <div className="divider"></div>
-                        </>
-                    )}
+                    {/* Unified File Menu Dropdown */}
+                    <div className="file-menu-container" ref={fileMenuRef}>
+                        <button
+                            className={`btn-icon file-menu-trigger ${fileMenuOpen ? 'active' : ''}`}
+                            onClick={() => setFileMenuOpen(prev => !prev)}
+                            title="File Menu"
+                        >
+                            <FilePlus size={17} />
+                            <span>File</span>
+                            <ChevronDown
+                                size={13}
+                                style={{
+                                    marginLeft: 2,
+                                    opacity: 0.65,
+                                    transition: 'transform 0.2s',
+                                    transform: fileMenuOpen ? 'rotate(180deg)' : 'none'
+                                }}
+                            />
+                        </button>
+
+                        {fileMenuOpen && (
+                            <div className="file-menu-dropdown">
+                                <button
+                                    className="file-menu-item"
+                                    onClick={() => { onNew && onNew(); setFileMenuOpen(false); }}
+                                >
+                                    <FilePlus size={15} />
+                                    <span>New Project</span>
+                                </button>
+                                <button
+                                    className="file-menu-item"
+                                    onClick={() => { onOpen && onOpen(); setFileMenuOpen(false); }}
+                                >
+                                    <FolderOpen size={15} />
+                                    <span>Open Project</span>
+                                </button>
+                                <div className="file-menu-divider" />
+                                <button
+                                    className="file-menu-item"
+                                    onClick={() => { onSave && onSave(); setFileMenuOpen(false); }}
+                                >
+                                    <Save size={15} />
+                                    <span>Save</span>
+                                    <span className="file-menu-shortcut">Ctrl+S</span>
+                                </button>
+                                <div className="file-menu-divider" />
+                                <button
+                                    className="file-menu-item"
+                                    onClick={() => { onExport && onExport(); setFileMenuOpen(false); }}
+                                >
+                                    <Download size={15} />
+                                    <span>Export PDF</span>
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
                     <ActionButton onClick={onOpenMetadata} icon={<FileJson size={18} />} label="Project" />
                     <ActionButton onClick={onOpenSettings} icon={<Settings size={18} />} label="Settings" />
 

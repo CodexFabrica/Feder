@@ -121,6 +121,11 @@ ipcMain.handle('shell:openExternal', async (_, url) => {
     await shell.openExternal(url);
 });
 
+ipcMain.handle('shell:openPath', async (_, dirPath) => {
+    const { shell } = require('electron');
+    await shell.openPath(dirPath);
+});
+
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
