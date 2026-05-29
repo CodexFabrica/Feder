@@ -22,6 +22,25 @@ import html2pdf from 'html2pdf.js';
 
 const isElectron = /Electron/i.test(navigator.userAgent);
 
+const DEFAULT_COMMENT_TAGS = {
+  major: [
+    { id: 'methodological', label: 'Methodological', color: '#ff4d4d' },
+    { id: 'conceptual', label: 'Conceptual', color: '#ff944d' },
+    { id: 'overreaching', label: 'Overreaching', color: '#ffcc4d' },
+    { id: 'ethical', label: 'Ethical concerns', color: '#e60000' }
+  ],
+  minor: [
+    { id: 'clarification', label: 'Clarification request', color: '#3399ff' },
+    { id: 'data_presentation', label: 'Data presentation', color: '#33ccff' },
+    { id: 'missing_reference', label: 'Missing reference', color: '#5c5cff' }
+  ],
+  minor_formal: [
+    { id: 'journal_guidelines', label: 'Journal guidelines', color: '#2eb8b8' },
+    { id: 'structure', label: 'Structure (move paragraph)', color: '#20c997' },
+    { id: 'editorial', label: 'Editorial', color: '#f06595' }
+  ]
+};
+
 function App() {
   const [theme, setTheme] = useState('light'); // 'light' | 'semi-dark' | 'dark'
   const [mode, setMode] = useState('journalist');
@@ -98,6 +117,31 @@ function App() {
     readFile
   } = useFileSystem();
 
+  // Helper to convert hex to RGB
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result
+      ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}`
+      : '9, 132, 227';
+  };
+
+  // Sync projectMetadata visual customisations to document element and state
+  useEffect(() => {
+    const acc = projectMetadata?.accentColor || '#0984e3';
+    document.documentElement.style.setProperty('--accent-color', acc);
+    document.documentElement.style.setProperty('--accent-color-rgb', hexToRgb(acc));
+
+    const linkCol = projectMetadata?.linkColor || '#0984e3';
+    document.documentElement.style.setProperty('--link-color', linkCol);
+
+    const fSize = projectMetadata?.editorFontSize || 14;
+    document.documentElement.style.setProperty('--editor-font-size', `${fSize}px`);
+
+    if (projectMetadata?.theme && projectMetadata.theme !== theme) {
+      setTheme(projectMetadata.theme);
+    }
+  }, [projectMetadata]);
+
   // Theme Toggle Logic
   useEffect(() => {
     document.documentElement.classList.remove('dark', 'semi-dark', 'semi-light');
@@ -117,10 +161,16 @@ function App() {
 
   const toggleTheme = () => {
     setTheme(prev => {
-      if (prev === 'light') return 'semi-light';
-      if (prev === 'semi-light') return 'semi-dark';
-      if (prev === 'semi-dark') return 'dark';
-      return 'light';
+      let next = 'light';
+      if (prev === 'light') next = 'semi-light';
+      else if (prev === 'semi-light') next = 'semi-dark';
+      else if (prev === 'semi-dark') next = 'dark';
+
+      // Persist theme toggle directly in project settings if project is loaded
+      if (dirHandle) {
+        handleUpdateProjectSettings({ ...projectMetadata, theme: next });
+      }
+      return next;
     });
   };
 
@@ -145,7 +195,7 @@ function App() {
   }, [dirHandle]);
 
   const scanNotesDir = useCallback(async () => {
-    if (!dirHandle) {
+    if (!dirHandle || projectMetadata?.plugins?.notes === false) {
       setHasNotesDir(false);
       setNotesList([]);
       return;
@@ -207,10 +257,10 @@ function App() {
       setHasNotesDir(false);
       setNotesList([]);
     }
-  }, [dirHandle]);
+  }, [dirHandle, projectMetadata?.plugins?.notes]);
 
   const scanIdeasDir = useCallback(async () => {
-    if (!dirHandle) {
+    if (!dirHandle || projectMetadata?.plugins?.ideas === false) {
       setHasIdeasDir(false);
       return;
     }
@@ -230,7 +280,7 @@ function App() {
       console.error('Error scanning ideas folder:', err);
       setHasIdeasDir(false);
     }
-  }, [dirHandle]);
+  }, [dirHandle, projectMetadata?.plugins?.ideas]);
 
   const scanBibFiles = useCallback(async () => {
     if (!dirHandle) {
@@ -353,7 +403,7 @@ function App() {
   };
 
   const handleAddComment = async (text, selectionInfo) => {
-    // selectionInfo comes from Editor: { text, start, end, contextBefore, contextAfter }
+    // selectionInfo comes from Editor: { text, start, end, contextBefore, contextAfter, line, tag }
     if (!text || !selectionInfo) return;
 
     const newComment = {
@@ -362,18 +412,20 @@ function App() {
       selection: selectionInfo.text,
       contextBefore: selectionInfo.contextBefore,
       contextAfter: selectionInfo.contextAfter,
+      line: selectionInfo.line,
+      tag: selectionInfo.tag, // Pass custom peer review tag
       status: 'open', // 'open' | 'resolved'
       replies: [],
       date: new Date().toISOString()
     };
 
-    const newComments = [...(projectMetadata.comments || []), newComment];
-    updateProjectComments(newComments);
+    const newComments = [...(metadata.comments || []), newComment];
+    await updateActiveFileComments(newComments);
     setRightPanelTab('comments');
   };
 
-  const handleReplyComment = (commentId, replyText) => {
-    const newComments = (projectMetadata.comments || []).map(c => {
+  const handleReplyComment = async (commentId, replyText) => {
+    const newComments = (metadata.comments || []).map(c => {
       if (c.id === commentId) {
         return {
           ...c,
@@ -386,76 +438,66 @@ function App() {
       }
       return c;
     });
-    updateProjectComments(newComments);
+    await updateActiveFileComments(newComments);
   };
 
-  const handleResolveComment = (commentId) => {
-    const newComments = (projectMetadata.comments || []).map(c => {
+  const handleResolveComment = async (commentId) => {
+    const newComments = (metadata.comments || []).map(c => {
       if (c.id === commentId) {
         return { ...c, status: c.status === 'open' ? 'resolved' : 'open' };
       }
       return c;
     });
-    updateProjectComments(newComments);
+    await updateActiveFileComments(newComments);
   };
 
-  const handleDeleteComment = (commentId) => {
-    const newComments = (projectMetadata.comments || []).filter(c => c.id !== commentId);
-    updateProjectComments(newComments);
+  const handleDeleteComment = async (commentId) => {
+    const newComments = (metadata.comments || []).filter(c => c.id !== commentId);
+    await updateActiveFileComments(newComments);
   };
 
-  const updateProjectComments = async (newComments) => {
-    const newMeta = { ...projectMetadata, comments: newComments };
-    setProjectMetadata(newMeta);
-    if (dirHandle) {
+  const updateActiveFileComments = async (newComments) => {
+    const newMeta = { ...metadata, comments: newComments };
+    setMetadata(newMeta);
+    
+    if (currentFile.kind === 'md' && currentFile.handle) {
       try {
-        await writeFileInDir(dirHandle, 'project_metadata.json', JSON.stringify(newMeta, null, 2));
-      } catch (e) { console.error(e); }
+        const metaString = Object.keys(newMeta).length > 0 ? yaml.dump(newMeta) : '';
+        const fullContent = metaString
+          ? `---\n${metaString}---\n\n${content}`
+          : content;
+        
+        await saveFile(fullContent, currentFile.handle);
+        setIsDirty(false);
+      } catch (e) {
+        console.error("Failed to auto-save file metadata comments:", e);
+      }
     }
   };
 
   // Validate comments against content on change (remove orphaned)
-  // We use a debounced effect usually, or checking inside Editor rendering.
-  // Ideally, Editor tells us which comments are valid.
-  // For now, let's keep all and rely on Editor to visualize valid ones. 
-  // User Requirement: "if text being commented is removed, then the comment is removed too"
-  // We can check this when content updates or periodically. 
   useEffect(() => {
-    if (!content || !projectMetadata.comments) return;
+    if (!content || !metadata.comments) return;
 
-    const validComments = projectMetadata.comments.filter(c => {
-      if (c.status === 'resolved') return true; // Keep resolved? or remove? "if text removed... comment removed".
-      // Let's strict check: if we can't find anchor, remove.
+    const validComments = metadata.comments.filter(c => {
+      if (c.status === 'resolved') return true; // Keep resolved
       // Try strict context match first
       const strictSearch = c.contextBefore + c.selection + c.contextAfter;
       if (content.includes(strictSearch)) return true;
 
-      // Try loose match (just selection) - Dangerous for duplicates?
-      // User might edit context. 
-      // Let's require at least selection existence.
+      // Try loose match (just selection)
       if (content.includes(c.selection)) return true;
 
       return false;
     });
 
-    if (validComments.length !== projectMetadata.comments.length) {
-      // Avoid infinite loops, maybe debounce this or only run on save?
-      // Running on every render might be too aggressive if user is typing "around" it.
-      // Let's NOT auto-delete instantly while typing. 
-      // Maybe only validate on file load or explicit "Clean" action? 
-      // Or just don't render them (ghost-overlay handles this).
-      // The user said "comment IS removed", implying data deletion.
-      // Let's stick to: If checking strictly is too hard, we just filter existing ones.
-      // We will update the DB only if significantly different.
-
-      // For stability, let's defer this or make it a separate maintenance task.
-      // But for the user request, I will implement a check.
+    if (validComments.length !== metadata.comments.length) {
       const timer = setTimeout(() => {
-        updateProjectComments(validComments);
+        updateActiveFileComments(validComments);
       }, 2000); // 2 seconds of "missing" text before deletion
       return () => clearTimeout(timer);
     }
-  }, [content, projectMetadata.comments]);
+  }, [content, metadata.comments]);
 
 
 
@@ -1656,7 +1698,8 @@ function App() {
             onRequestImprovement={handleRequestImprovement}
             onSelectionChange={setEditorSelection}
             onRegisterCancel={(fn) => { cancelAiRef.current = fn; }}
-            comments={projectMetadata?.comments || []}
+            comments={metadata?.comments || []}
+            commentTags={projectMetadata?.commentTags || DEFAULT_COMMENT_TAGS}
             onAddComment={handleAddComment}
             onCommentPositionsChange={setCommentPositions}
             onEditorScrollChange={setEditorScrollTop}

@@ -1067,7 +1067,7 @@ export function PreviewWrapper({ settings, content, metadata, projectMetadata, d
                 {currentTab === 'comments' && (
                     <CommentsPanel
                         selection={editorSelection}
-                        comments={projectMetadata?.comments || []}
+                        comments={metadata?.comments || []}
                         onReply={onReplyComment}
                         onResolve={onResolveComment}
                         onDelete={onDeleteComment}
@@ -1385,6 +1385,28 @@ function PositionedCommentCard({ comment, top, anchorY, onReply, onResolve, onDe
                     "{comment.selection && comment.selection.length > 50 ? comment.selection.substring(0, 50) + '...' : comment.selection}"
                 </div>
 
+                {comment.tag && (
+                    <div style={{ marginBottom: 6, display: 'flex', gap: 4 }}>
+                        <span style={{
+                            backgroundColor: `${comment.tag.color}1c`,
+                            border: `1.5px solid ${comment.tag.color}`,
+                            color: comment.tag.color,
+                            fontSize: '0.7rem',
+                            fontWeight: 800,
+                            padding: '2px 8px',
+                            borderRadius: '12px',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.5px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4
+                        }}>
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: comment.tag.color, display: 'inline-block' }} />
+                            {comment.tag.label}
+                        </span>
+                    </div>
+                )}
+
                 {/* Comment text */}
                 <div style={{ color: 'var(--text-primary)', marginBottom: 8, fontSize: '0.9rem' }}>{comment.text}</div>
 
@@ -1453,9 +1475,30 @@ function CommentCard({ comment, onReply, onResolve, onDelete }) {
             opacity: isResolved ? 0.7 : 1
         }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, alignItems: 'center' }}>
-                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: isResolved ? 'var(--text-secondary)' : 'var(--accent-color)' }}>
-                    {isResolved ? 'RESOLVED' : 'OPEN'}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: isResolved ? 'var(--text-secondary)' : 'var(--accent-color)' }}>
+                        {isResolved ? 'RESOLVED' : 'OPEN'}
+                    </span>
+                    {comment.tag && (
+                        <span style={{
+                            backgroundColor: `${comment.tag.color}1c`,
+                            border: `1px solid ${comment.tag.color}`,
+                            color: comment.tag.color,
+                            fontSize: '0.68rem',
+                            fontWeight: 800,
+                            padding: '1px 6px',
+                            borderRadius: '10px',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.5px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 3
+                        }}>
+                            <span style={{ width: 5, height: 5, borderRadius: '50%', background: comment.tag.color, display: 'inline-block' }} />
+                            {comment.tag.label}
+                        </span>
+                    )}
+                </div>
                 <div style={{ display: 'flex', gap: 6 }}>
                     <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{new Date(comment.date).toLocaleDateString()}</span>
                     <button onClick={() => onDelete && onDelete(comment.id)} title="Delete" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)' }}><Trash2 size={12} /></button>

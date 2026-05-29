@@ -2,11 +2,33 @@ import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { Bold, Italic, Underline, Heading1, Heading2, Image, Link, List, Quote, Code, ImagePlus, Sparkles, MessageSquare, BookMarked, Sigma, Table, ChevronDown, BookOpen, X } from 'lucide-react';
 import { requestInlineSuggestion } from '../utils/aiSuggestions';
 
-export function Editor({ value, onChange, mode, onUploadImage, settings, projectMetadata, onAiThinking, onRegisterCancel, onRequestImprovement, onSelectionChange, comments, onAddComment, onCommentPositionsChange, onEditorScrollChange }) {
+export function Editor({ value, onChange, mode, onUploadImage, settings, projectMetadata, onAiThinking, onRegisterCancel, onRequestImprovement, onSelectionChange, comments, commentTags, onAddComment, onCommentPositionsChange, onEditorScrollChange }) {
     const textareaRef = useRef(null);
     const mirrorRef = useRef(null);
     const ghostRef = useRef(null);
     const positionMirrorRef = useRef(null);
+    
+    // Fallback default tags if not configured
+    const DEFAULT_COMMENT_TAGS = {
+      major: [
+        { id: 'methodological', label: 'Methodological', color: '#ff4d4d' },
+        { id: 'conceptual', label: 'Conceptual', color: '#ff944d' },
+        { id: 'overreaching', label: 'Overreaching', color: '#ffcc4d' },
+        { id: 'ethical', label: 'Ethical concerns', color: '#e60000' }
+      ],
+      minor: [
+        { id: 'clarification', label: 'Clarification request', color: '#3399ff' },
+        { id: 'data_presentation', label: 'Data presentation', color: '#33ccff' },
+        { id: 'missing_reference', label: 'Missing reference', color: '#5c5cff' }
+      ],
+      minor_formal: [
+        { id: 'journal_guidelines', label: 'Journal guidelines', color: '#2eb8b8' },
+        { id: 'structure', label: 'Structure (move paragraph)', color: '#20c997' },
+        { id: 'editorial', label: 'Editorial', color: '#f06595' }
+      ]
+    };
+    
+    const activeTags = commentTags || DEFAULT_COMMENT_TAGS;
 
     const debounceRef = useRef(null);
     const abortRef = useRef(null);
@@ -34,6 +56,18 @@ export function Editor({ value, onChange, mode, onUploadImage, settings, project
     const [widgetMenuOpen, setWidgetMenuOpen] = useState(false); // 'improve' | 'none'
     const [commentInputOpen, setCommentInputOpen] = useState(false);
     const [newCommentText, setNewCommentText] = useState('');
+    const [selectedTagId, setSelectedTagId] = useState('');
+
+    const findSelectedTagObj = () => {
+        if (!selectedTagId) return null;
+        const tagsList = [
+            ...(activeTags.major || []),
+            ...(activeTags.minor || []),
+            ...(activeTags.minor_formal || [])
+        ];
+        return tagsList.find(t => t.id === selectedTagId) || null;
+    };
+    const activeSelectedTag = findSelectedTagObj();
 
     const insertText = (before, after = '') => {
         const textarea = textareaRef.current;
@@ -288,7 +322,9 @@ export function Editor({ value, onChange, mode, onUploadImage, settings, project
 
         return segments.map((s, i) => {
             if (s.type === 'highlight') {
-                return <span key={i} style={{ backgroundColor: 'rgba(255, 215, 0, 0.3)', borderBottom: '2px solid rgba(255, 180, 0, 0.6)' }}>{s.text}</span>;
+                const range = commentRanges.find(r => r.id === s.id);
+                const tagColor = range?.comment?.tag?.color || '#ffb400';
+                return <span key={i} style={{ backgroundColor: `${tagColor}33`, borderBottom: `2px solid ${tagColor}` }}>{s.text}</span>;
             }
             if (s.type === 'suggestion') {
                 return <span key={i} className="suggestion">{s.text}</span>;
@@ -704,33 +740,73 @@ export function Editor({ value, onChange, mode, onUploadImage, settings, project
                                             if (newCommentText.trim()) {
                                                 const start = selectionRange?.start || 0;
                                                 const end = selectionRange?.end || 0;
+                                                const startLine = value.substring(0, start).split('\n').length;
                                                 // Capture context
                                                 const contextBefore = value.substring(Math.max(0, start - 20), start);
                                                 const contextAfter = value.substring(end, Math.min(value.length, end + 20));
 
                                                 if (onAddComment) {
-                                                    onAddComment(newCommentText, { text: selectedText, start, end, contextBefore, contextAfter });
+                                                    onAddComment(newCommentText, { text: selectedText, start, end, contextBefore, contextAfter, line: startLine, tag: activeSelectedTag });
                                                 }
                                                 setNewCommentText('');
+                                                setSelectedTagId('');
                                                 setCommentInputOpen(false);
                                                 setShowWidget(false);
                                             }
                                         }
                                     }}
                                 />
+                                
+                                <select
+                                    value={selectedTagId}
+                                    onChange={(e) => setSelectedTagId(e.target.value)}
+                                    style={{
+                                        width: '100%', padding: '6px 8px', fontSize: '0.8rem',
+                                        border: '1px solid var(--border-color)', borderRadius: '4px',
+                                        marginBottom: '8px', background: 'var(--bg-panel)', color: 'var(--text-primary)',
+                                        fontFamily: 'inherit'
+                                    }}
+                                >
+                                    <option value="">No Tag (General Comment)</option>
+                                    {activeTags.major && activeTags.major.length > 0 && (
+                                        <optgroup label="Major Comments">
+                                            {activeTags.major.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                                        </optgroup>
+                                    )}
+                                    {activeTags.minor && activeTags.minor.length > 0 && (
+                                        <optgroup label="Minor Comments">
+                                            {activeTags.minor.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                                        </optgroup>
+                                    )}
+                                    {activeTags.minor_formal && activeTags.minor_formal.length > 0 && (
+                                        <optgroup label="Minor Formal Comments">
+                                            {activeTags.minor_formal.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                                        </optgroup>
+                                    )}
+                                </select>
+
+                                {activeSelectedTag && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: '8px' }}>
+                                        <span style={{ width: 10, height: 10, borderRadius: '50%', background: activeSelectedTag.color, display: 'inline-block', border: '1px solid rgba(0,0,0,0.1)' }} />
+                                        <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Highlight Color: {activeSelectedTag.color}</span>
+                                    </div>
+                                )}
+
                                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 4 }}>
-                                    <button onClick={() => setCommentInputOpen(false)} style={{ fontSize: '0.75rem', padding: '4px 8px', border: 'none', background: 'transparent', cursor: 'pointer' }}>Cancel</button>
+                                    <button onClick={() => { setCommentInputOpen(false); setSelectedTagId(''); }} style={{ fontSize: '0.75rem', padding: '4px 8px', border: 'none', background: 'transparent', cursor: 'pointer' }}>Cancel</button>
                                     <button onClick={() => {
                                         if (newCommentText.trim()) {
                                             const start = selectionRange?.start || 0;
                                             const end = selectionRange?.end || 0;
+                                            const startLine = value.substring(0, start).split('\n').length;
                                             const contextBefore = value.substring(Math.max(0, start - 20), start);
                                             const contextAfter = value.substring(end, Math.min(value.length, end + 20));
 
                                             if (onAddComment) {
-                                                onAddComment(newCommentText, { text: selectedText, start, end, contextBefore, contextAfter });
+                                                onAddComment(newCommentText, { text: selectedText, start, end, contextBefore, contextAfter, line: startLine, tag: activeSelectedTag });
                                             }
                                             setNewCommentText('');
+                                            setSelectedTagId('');
                                             setCommentInputOpen(false);
                                             setShowWidget(false);
                                         }

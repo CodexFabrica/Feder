@@ -48,10 +48,10 @@ export function FileExplorer({
     const [draggedPath, setDraggedPath] = useState(null);
     const [dropTarget, setDropTarget] = useState(null); // { path, position: 'before' | 'after' | 'inside' }
     const [bottomSectionsOpen, setBottomSectionsOpen] = useState({
-        notes: true,
-        ideas: true,
-        figures: true,
-        references: true
+        notes: false,
+        ideas: false,
+        figures: false,
+        references: false
     });
     const [showUploadModal, setShowUploadModal] = useState(false);
     const [uploadFolderHandle, setUploadFolderHandle] = useState(null);
