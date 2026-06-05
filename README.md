@@ -1,6 +1,8 @@
 # Feder
 
-OPEN-SOURCE WEBAPP TO WRITE. This works in PC, not in the website. This is a side project using Antigravity.
+OPEN-SOURCE WRITTING WORKSPACE. Works in local browser, it is not a website yet. This is a side project using Antigravity.
+
+In the near future, I'll try to rewrite Feder without Node.js. There is unnecesary MB for this lightweight Webapp.
 
 ## Prerequisites
 
