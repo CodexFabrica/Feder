@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+dist_electron/
+
+# Installer outputs
+download_installer/
+
+# Environment and local config
+.env
+.env.*
+!.env.example
+
+# Logs and diagnostics
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Coverage
+coverage/
+
+# Python cache
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Editor/OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
