@@ -1586,4 +1586,107 @@ input[type=number].clean-number {
     text-align: left !important;
     display: inline-block;
     padding-left: 1.5rem;
+}
+
+/* Quote and Highlighted Block Styles */
+.preview-content blockquote {
+    border-left: 4px solid var(--accent-color);
+    padding: 3px 3px 3px 12px;
+    margin: 1.5rem 0;
+    font-style: italic;
+    color: var(--text-primary);
+    background-color: aliceblue;
+}
+
+.dark .preview-content blockquote {
+    background-color: #1a2333;
+}
+
+.semi-dark .preview-content blockquote {
+    background-color: #17253d;
+}
+
+.semi-light .preview-content blockquote {
+    background-color: #e5dac9;
+}
+
+.highlighted-block {
+    background-color: var(--bg-app);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 1.5rem 0;
+    color: var(--text-primary);
+}
+
+.highlighted-block p:first-child {
+    margin-top: 0;
+}
+
+.highlighted-block p:last-child {
+    margin-bottom: 0;
+}
+
+/* Paper View overrides for highlighted blocks */
+.panel-preview.paper-view-active .highlighted-block {
+    background-color: #f5f5f5 !important;
+    border-color: #e0e0e0 !important;
+    color: #000000 !important;
+}
+
+/* ================================================
+   Document Links — [document@path] cross-references
+   ================================================ */
+
+.document-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--accent-color);
+    text-decoration: none;
+    font-family: 'Consolas', 'Fira Code', 'Menlo', monospace;
+    font-size: 0.88em;
+    font-weight: 500;
+    background: rgba(var(--scholar-accent-rgb, 151, 71, 255), 0.08);
+    padding: 2px 8px;
+    border-radius: 5px;
+    border: 1px solid rgba(var(--scholar-accent-rgb, 151, 71, 255), 0.15);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.document-link:hover {
+    background: rgba(var(--scholar-accent-rgb, 151, 71, 255), 0.18);
+    border-color: rgba(var(--scholar-accent-rgb, 151, 71, 255), 0.35);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(var(--scholar-accent-rgb, 151, 71, 255), 0.15);
+    text-decoration: none;
+}
+
+.document-link:active {
+    transform: translateY(0);
+    box-shadow: none;
+}
+
+.document-link-icon {
+    flex-shrink: 0;
+    opacity: 0.7;
+}
+
+.document-link:hover .document-link-icon {
+    opacity: 1;
+}
+
+/* Paper View override */
+.panel-preview.paper-view-active .document-link {
+    color: #0066cc !important;
+    background: rgba(0, 102, 204, 0.06) !important;
+    border-color: rgba(0, 102, 204, 0.15) !important;
+}
+
+.panel-preview.paper-view-active .document-link:hover {
+    background: rgba(0, 102, 204, 0.12) !important;
+    border-color: rgba(0, 102, 204, 0.3) !important;
+    box-shadow: 0 2px 8px rgba(0, 102, 204, 0.1) !important;
 }

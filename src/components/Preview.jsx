@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
@@ -6,7 +6,7 @@ import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
-import { ChevronDown, ChevronRight, List, FileText, Sparkles, MessageSquare, Check, X as XIcon, RefreshCw, Send, Trash2, Network, Lightbulb } from 'lucide-react';
+import { ChevronDown, ChevronRight, List, FileText, Sparkles, MessageSquare, Check, X as XIcon, RefreshCw, Send, Trash2, Network, Lightbulb, FileSymlink } from 'lucide-react';
 import { NotesGraph } from './NotesGraph';
 import { IdeasGraph } from './IdeasGraph';
 
@@ -342,7 +342,7 @@ const processReferences = (text) => {
     return { content, map };
 };
 
-const MarkdownSection = ({ title, content, offset, dirHandle, onUpdateContent, activeAccentColor, fullContent, metadata, projectMetadata }) => {
+const MarkdownSection = React.memo(({ title, content, offset, dirHandle, onUpdateContent, activeAccentColor, metadata, projectMetadata, onDocumentLinkClick }) => {
     const [isOpen, setIsOpen] = useState(true);
 
     // Custom components with offset-aware checkbox logic
@@ -362,39 +362,42 @@ const MarkdownSection = ({ title, content, offset, dirHandle, onUpdateContent, a
                                 const localLineIndex = node.position.start.line - 1;
                                 const globalLineIndex = localLineIndex + offset;
 
-                                const lines = fullContent.split('\n');
+                                onUpdateContent((prevContent) => {
+                                    const lines = prevContent.split('\n');
 
-                                // Robust finding mechanism using global index
-                                let targetIndex = globalLineIndex;
-                                let found = false;
+                                    // Robust finding mechanism using global index
+                                    let targetIndex = globalLineIndex;
+                                    let found = false;
 
-                                // Check direct match
-                                if (lines[targetIndex] && lines[targetIndex].match(/^(\s*[-*+]\s+)\[([ xX])\]/)) {
-                                    found = true;
-                                }
-                                // Search window +/- 2 lines if position is slightly off
-                                else {
-                                    for (let searchOffset = -2; searchOffset <= 2; searchOffset++) {
-                                        const idx = globalLineIndex + searchOffset;
-                                        if (idx >= 0 && idx < lines.length && lines[idx].match(/^(\s*[-*+]\s+)\[([ xX])\]/)) {
-                                            targetIndex = idx;
-                                            found = true;
-                                            break;
+                                    // Check direct match
+                                    if (lines[targetIndex] && lines[targetIndex].match(/^(\s*[-*+]\s+)\[([ xX])\]/)) {
+                                        found = true;
+                                    }
+                                    // Search window +/- 2 lines if position is slightly off
+                                    else {
+                                        for (let searchOffset = -2; searchOffset <= 2; searchOffset++) {
+                                            const idx = globalLineIndex + searchOffset;
+                                            if (idx >= 0 && idx < lines.length && lines[idx].match(/^(\s*[-*+]\s+)\[([ xX])\]/)) {
+                                                targetIndex = idx;
+                                                found = true;
+                                                break;
+                                            }
                                         }
                                     }
-                                }
 
-                                if (found) {
-                                    const line = lines[targetIndex];
-                                    const match = line.match(/^(\s*[-*+]\s+)\[([ xX])\]/);
-                                    if (match) {
-                                        const prefix = match[1];
-                                        const current = match[2];
-                                        const newStatus = current === ' ' ? 'x' : ' ';
-                                        lines[targetIndex] = line.replace(/^(\s*[-*+]\s+)\[([ xX])\]/, `${prefix}[${newStatus}]`);
-                                        onUpdateContent(lines.join('\n'));
+                                    if (found) {
+                                        const line = lines[targetIndex];
+                                        const match = line.match(/^(\s*[-*+]\s+)\[([ xX])\]/);
+                                        if (match) {
+                                            const prefix = match[1];
+                                            const current = match[2];
+                                            const newStatus = current === ' ' ? 'x' : ' ';
+                                            lines[targetIndex] = line.replace(/^(\s*[-*+]\s+)\[([ xX])\]/, `${prefix}[${newStatus}]`);
+                                            return lines.join('\n');
+                                        }
                                     }
-                                }
+                                    return prevContent;
+                                });
                             }
                         }}
                         style={{ cursor: onUpdateContent ? 'pointer' : 'default', margin: '0 0.2rem 0.2rem 0', verticalAlign: 'middle', accentColor: activeAccentColor }}
@@ -403,7 +406,88 @@ const MarkdownSection = ({ title, content, offset, dirHandle, onUpdateContent, a
             }
             return <input {...props} />;
         },
-        del: ({ node, ...props }) => <span {...props} style={{ textDecoration: 'none' }} />
+        del: ({ node, ...props }) => <span {...props} style={{ textDecoration: 'none' }} />,
+        a: ({ node, href, children, ...props }) => {
+            // Intercept document links with feder-doc:// protocol
+            if (href && href.startsWith('feder-doc://')) {
+                const docPath = href.replace('feder-doc://', '');
+                return (
+                    <a
+                        {...props}
+                        href="#"
+                        className="document-link"
+                        onClick={(e) => {
+                            e.preventDefault();
+                            if (onDocumentLinkClick) onDocumentLinkClick(docPath);
+                        }}
+                        title={`Open document: ${docPath}`}
+                    >
+                        <FileSymlink size={14} className="document-link-icon" />
+                        {children}
+                    </a>
+                );
+            }
+            return <a href={href} {...props}>{children}</a>;
+        },
+        blockquote: ({ node, children, ...props }) => {
+            let isBlock = false;
+            
+            const traverseAndStrip = (childNode) => {
+                if (typeof childNode === 'string') {
+                    const match = childNode.match(/^block([ \t\r\n]|$)/);
+                    if (match) {
+                        isBlock = true;
+                        return childNode.substring(match[0].length);
+                    }
+                    return childNode;
+                }
+                if (React.isValidElement(childNode)) {
+                    let childModified = false;
+                    const newGrandChildren = React.Children.map(childNode.props.children, (grandChild) => {
+                        const res = traverseAndStrip(grandChild);
+                        if (res !== grandChild) {
+                            childModified = true;
+                            return res;
+                        }
+                        return grandChild;
+                    });
+                    if (childModified) {
+                        return React.cloneElement(childNode, {}, newGrandChildren);
+                    }
+                }
+                if (Array.isArray(childNode)) {
+                    if (childNode.length > 0) {
+                        const firstRes = traverseAndStrip(childNode[0]);
+                        if (firstRes !== childNode[0]) {
+                            isBlock = true;
+                            return [firstRes, ...childNode.slice(1)];
+                        }
+                    }
+                }
+                return childNode;
+            };
+
+            const newChildren = React.Children.map(children, (child, idx) => {
+                if (idx === 0) {
+                    return traverseAndStrip(child);
+                }
+                return child;
+            });
+
+            if (isBlock) {
+                return (
+                    <div className="highlighted-block" {...props}>
+                        {newChildren}
+                    </div>
+                );
+            }
+
+            return (
+                <blockquote {...props}>
+                    {children}
+                </blockquote>
+            );
+        }
     };
 
     if (title === null) {
@@ -468,9 +552,9 @@ const MarkdownSection = ({ title, content, offset, dirHandle, onUpdateContent, a
             )}
         </div>
     );
-};
+});
 
-function MarkdownPreview({ content, metadata, projectMetadata, dirHandle, mode, onUpdateContent, onUpdateMetadata, paperView, isEditingNote, isEditingIdea }) {
+const MarkdownPreview = React.memo(function MarkdownPreview({ content, metadata, projectMetadata, dirHandle, mode, onUpdateContent, onUpdateMetadata, paperView, isEditingNote, isEditingIdea, onDocumentLinkClick }) {
     const [coverOpen, setCoverOpen] = useState(true);
     const [tocOpen, setTocOpen] = useState(true);
 
@@ -665,7 +749,19 @@ function MarkdownPreview({ content, metadata, projectMetadata, dirHandle, mode, 
         return processReferences(contentWithCitations);
     }, [contentWithCitations]);
 
-    const sections = React.useMemo(() => splitByH1(contentWithInternalRefs), [contentWithInternalRefs]);
+    // Process Document Links: [document@path/to/file.md]
+    const contentWithDocLinks = React.useMemo(() => {
+        if (!contentWithInternalRefs) return contentWithInternalRefs;
+        return contentWithInternalRefs.replace(
+            /\[document@([^\]]+)\]/g,
+            (match, docPath) => {
+                const trimmedPath = docPath.trim();
+                return `[${trimmedPath}](feder-doc://${trimmedPath})`;
+            }
+        );
+    }, [contentWithInternalRefs]);
+
+    const sections = React.useMemo(() => splitByH1(contentWithDocLinks), [contentWithDocLinks]);
 
     return (
         <div
@@ -920,20 +1016,33 @@ function MarkdownPreview({ content, metadata, projectMetadata, dirHandle, mode, 
                 )}
 
                 <div className="preview-markdown-body">
-                    {sections.map((section, idx) => (
-                        <MarkdownSection
-                            key={idx}
-                            title={section.title}
-                            content={section.lines.join('\n')}
-                            offset={section.startLine}
-                            dirHandle={dirHandle}
-                            onUpdateContent={onUpdateContent}
-                            activeAccentColor={activeAccentColor}
-                            fullContent={content}
-                            metadata={metadata}
-                            projectMetadata={projectMetadata}
-                        />
-                    ))}
+                    {(() => {
+                        const seenTitles = {};
+                        return sections.map((section, idx) => {
+                            const baseKey = section.title || 'preamble';
+                            let key = baseKey;
+                            if (seenTitles[baseKey] !== undefined) {
+                                seenTitles[baseKey]++;
+                                key = `${baseKey}-${seenTitles[baseKey]}`;
+                            } else {
+                                seenTitles[baseKey] = 0;
+                            }
+                            return (
+                                <MarkdownSection
+                                    key={key}
+                                    title={section.title}
+                                    content={section.lines.join('\n')}
+                                    offset={section.startLine}
+                                    dirHandle={dirHandle}
+                                    onUpdateContent={onUpdateContent}
+                                    activeAccentColor={activeAccentColor}
+                                    metadata={metadata}
+                                    projectMetadata={projectMetadata}
+                                    onDocumentLinkClick={onDocumentLinkClick}
+                                />
+                            );
+                        });
+                    })()}
 
                     {/* References Section */}
                     {(metadata?.useReferences ?? metadata?.showReferences) && (
@@ -943,7 +1052,7 @@ function MarkdownPreview({ content, metadata, projectMetadata, dirHandle, mode, 
             </div>
         </div>
     );
-}
+});
 
 export function PreviewWrapper({ settings, content, metadata, projectMetadata, dirHandle, mode, paperView, onUpdateContent, onUpdateMetadata, activeTab, onTabChange, improvementData, onApplyImprovement, onRetryImprovement, editorSelection, onAddComment, onReplyComment, onResolveComment, onDeleteComment, commentPositions, editorScrollTop, hasNotesDir, notesList, onFileSelect, currentFilename, hasIdeasDir, isEditingNote, isEditingIdea, currentFileContent }) {
 
@@ -971,6 +1080,28 @@ export function PreviewWrapper({ settings, content, metadata, projectMetadata, d
     const isAiEnabled = aiGlobal.enabled;
     const isImprovementsEnabled = aiGlobal.improvements?.enabled !== false;
     const showImprovements = isAiEnabled && isImprovementsEnabled;
+
+    // Document Link handler: resolves path relative to project root and opens file
+    const onDocumentLinkClick = useCallback(async (docPath) => {
+        if (!dirHandle || !onFileSelect) return;
+        try {
+            const parts = docPath.split('/').filter(p => !!p);
+            let currentHandle = dirHandle;
+
+            // Traverse subdirectories
+            for (let i = 0; i < parts.length - 1; i++) {
+                currentHandle = await currentHandle.getDirectoryHandle(parts[i]);
+            }
+
+            // Get the file handle
+            const filename = parts[parts.length - 1];
+            const fileHandle = await currentHandle.getFileHandle(filename);
+            onFileSelect(fileHandle, docPath);
+        } catch (e) {
+            console.warn(`Document link: could not open "${docPath}"`, e);
+            alert(`Could not open document: ${docPath}\n\nMake sure the file exists in your project.`);
+        }
+    }, [dirHandle, onFileSelect]);
 
     return (
         <div className="preview-container-wrapper" style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-panel)' }}>
@@ -1034,6 +1165,7 @@ export function PreviewWrapper({ settings, content, metadata, projectMetadata, d
                         onUpdateMetadata={onUpdateMetadata}
                         isEditingNote={isEditingNote}
                         isEditingIdea={isEditingIdea}
+                        onDocumentLinkClick={onDocumentLinkClick}
                     />
                 </div>
 

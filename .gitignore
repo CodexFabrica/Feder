@@ -33,3 +33,11 @@ __pycache__/
 Thumbs.db
 .idea/
 .vscode/
+
+# others
+.agent/
+.antigravitycli/
+
+# installers
+download_installer/
+dist_electron/win-unpacked/Feder.exe

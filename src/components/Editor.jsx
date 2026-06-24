@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { Bold, Italic, Underline, Heading1, Heading2, Image, Link, List, Quote, Code, ImagePlus, Sparkles, MessageSquare, BookMarked, Sigma, Table, ChevronDown, BookOpen, X } from 'lucide-react';
 import { requestInlineSuggestion } from '../utils/aiSuggestions';
 
-export function Editor({ value, onChange, mode, onUploadImage, settings, projectMetadata, onAiThinking, onRegisterCancel, onRequestImprovement, onSelectionChange, comments, commentTags, onAddComment, onCommentPositionsChange, onEditorScrollChange }) {
+export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, settings, projectMetadata, onAiThinking, onRegisterCancel, onRequestImprovement, onSelectionChange, comments, commentTags, onAddComment, onCommentPositionsChange, onEditorScrollChange }) {
     const textareaRef = useRef(null);
     const mirrorRef = useRef(null);
     const ghostRef = useRef(null);
@@ -44,10 +44,13 @@ export function Editor({ value, onChange, mode, onUploadImage, settings, project
 
     const [showImageMenu, setShowImageMenu] = useState(false);
     const [showListMenu, setShowListMenu] = useState(false);
+    const [showQuoteMenu, setShowQuoteMenu] = useState(false);
     const [showDocModal, setShowDocModal] = useState(false);
 
     const imageMenuRef = useRef(null);
     const listMenuRef = useRef(null);
+    const quoteMenuRef = useRef(null);
+
 
     // Improvement/Comment Widget State
     const [showWidget, setShowWidget] = useState(false);
@@ -146,6 +149,7 @@ export function Editor({ value, onChange, mode, onUploadImage, settings, project
     }, [onSelectionChange]);
 
     const updateCaretPosition = useCallback(() => {
+        if (!showWidget) return;
         const textarea = textareaRef.current;
         const mirror = mirrorRef.current;
         if (!textarea || !mirror) return;
@@ -217,7 +221,7 @@ export function Editor({ value, onChange, mode, onUploadImage, settings, project
         const left = span.offsetLeft + parseInt(computed.borderLeftWidth) - textarea.scrollLeft;
 
         setCaretPos({ top, left });
-    }, []);
+    }, [showWidget]);
 
     useEffect(() => {
         updateCursor();
@@ -235,10 +239,13 @@ export function Editor({ value, onChange, mode, onUploadImage, settings, project
             if (showListMenu && listMenuRef.current && !listMenuRef.current.contains(e.target)) {
                 setShowListMenu(false);
             }
+            if (showQuoteMenu && quoteMenuRef.current && !quoteMenuRef.current.contains(e.target)) {
+                setShowQuoteMenu(false);
+            }
         };
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, [showCiteMenu, showImageMenu, showListMenu]);
+    }, [showCiteMenu, showImageMenu, showListMenu, showQuoteMenu]);
 
     // --- Compute comment ranges in the text ---
     const commentRanges = useMemo(() => {
@@ -376,8 +383,17 @@ export function Editor({ value, onChange, mode, onUploadImage, settings, project
     }, [commentRanges, value, onCommentPositionsChange]);
 
     useEffect(() => {
-        computeCommentPositions();
-    }, [computeCommentPositions, value, comments]);
+        if (!comments || comments.length === 0) {
+            if (onCommentPositionsChange) onCommentPositionsChange([]);
+            return;
+        }
+
+        const handler = setTimeout(() => {
+            computeCommentPositions();
+        }, 400);
+
+        return () => clearTimeout(handler);
+    }, [computeCommentPositions, value, comments, onCommentPositionsChange]);
 
     // Recompute on resize        
     useEffect(() => {
@@ -407,9 +423,46 @@ export function Editor({ value, onChange, mode, onUploadImage, settings, project
         }
     };
 
+    const handlePaste = useCallback(async (e) => {
+        if (!onPasteImage) return;
+        const items = e.clipboardData?.items;
+        if (!items) return;
+
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].type.indexOf('image') !== -1) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const pastedFile = items[i].getAsFile();
+                if (!pastedFile) return;
+
+                // Generate a descriptive filename with timestamp
+                const now = new Date();
+                const pad = (n) => String(n).padStart(2, '0');
+                const timestamp = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+                const ext = pastedFile.type.split('/')[1] || 'png';
+                const name = `pasted_${timestamp}.${ext}`;
+                const fileWithName = new File([pastedFile], name, { type: pastedFile.type });
+
+                try {
+                    const result = await onPasteImage(fileWithName);
+                    if (result) {
+                        const id = result.alt.replace(/[^a-zA-Z0-9_]/g, '_');
+                        insertText(`![${result.alt}](${result.src}){#${id} width=100%}`, '');
+                    }
+                } catch (err) {
+                    console.error('Paste image failed:', err);
+                }
+                return;
+            }
+        }
+    }, [onPasteImage]);
+
     useEffect(() => {
-        updateCaretPosition();
-    }, [value, cursorVersion, suggestion, updateCaretPosition]);
+        if (showWidget) {
+            updateCaretPosition();
+        }
+    }, [value, cursorVersion, suggestion, showWidget, updateCaretPosition]);
 
     // AI Suggestion Logic
     const fetchSuggestion = useCallback(async () => {
@@ -571,7 +624,31 @@ export function Editor({ value, onChange, mode, onUploadImage, settings, project
                     )}
                 </div>
 
-                <ToolBtn icon={<Quote size={18} />} onClick={() => insertText('> ')} title="Quote" />
+                {/* Quote Dropdown Menu */}
+                <div className="relative-tool-container" ref={quoteMenuRef} style={{ position: 'relative', display: 'inline-block' }}>
+                    <ToolBtn icon={<Quote size={18} />} onClick={() => setShowQuoteMenu(prev => !prev)} title="Quote Options" />
+                    {showQuoteMenu && (
+                        <div className="tool-dropdown-menu" style={{
+                            position: 'absolute',
+                            top: '100%',
+                            left: 0,
+                            background: 'var(--bg-panel)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '6px',
+                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+                            zIndex: 100,
+                            minWidth: '160px',
+                            padding: '4px 0'
+                        }}>
+                            <button className="dropdown-item" onClick={() => { insertText('> '); setShowQuoteMenu(false); }}>
+                                Standard Quote
+                            </button>
+                            <button className="dropdown-item" onClick={() => { insertText('>block '); setShowQuoteMenu(false); }}>
+                                Highlighted Block
+                            </button>
+                        </div>
+                    )}
+                </div>
                 <ToolBtn icon={<Code size={18} />} onClick={() => insertText('`', '`')} title="Inline Code" />
                 <div className="divider"></div>
                 <ToolBtn icon={<Link size={18} />} onClick={() => insertText('[', '](url)')} title="Link" />
@@ -862,6 +939,7 @@ export function Editor({ value, onChange, mode, onUploadImage, settings, project
                     className="main-textarea"
                     placeholder="# Start writing..."
                     spellCheck="false"
+                    onPaste={handlePaste}
                     onKeyDown={(e) => {
                         if (suggestion && e.key === 'Tab') {
                             e.preventDefault();

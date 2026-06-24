@@ -10,7 +10,7 @@ const SPECIAL_SECTIONS = [
     { key: 'references', label: 'REFERENCES' }
 ];
 
-export function FileExplorer({
+function FileExplorerWrapper({
     dirHandle,
     onFileSelect,
     currentFilename,
@@ -748,3 +748,5 @@ export function FileExplorer({
         </div>
     );
 }
+
+export const FileExplorer = React.memo(FileExplorerWrapper);

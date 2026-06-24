@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
 import './components/MarkdownSections.css';
 import yaml from 'js-yaml';
@@ -37,9 +37,11 @@ const DEFAULT_COMMENT_TAGS = {
   minor_formal: [
     { id: 'journal_guidelines', label: 'Journal guidelines', color: '#2eb8b8' },
     { id: 'structure', label: 'Structure (move paragraph)', color: '#20c997' },
-    { id: 'editorial', label: 'Editorial', color: '#f06595' }
   ]
 };
+
+const EMPTY_OBJECT = {};
+const EMPTY_ARRAY = [];
 
 function App() {
   const [theme, setTheme] = useState('light'); // 'light' | 'semi-dark' | 'dark'
@@ -116,6 +118,9 @@ function App() {
     setDirHandle,
     readFile
   } = useFileSystem();
+
+  const latestStateRef = useRef({});
+  const handleRefresh = useCallback(() => setRefreshTrigger(prev => prev + 1), []);
 
   // Helper to convert hex to RGB
   const hexToRgb = (hex) => {
@@ -339,7 +344,7 @@ function App() {
   }, []);
 
   // --- AI Improvement Handlers ---
-  const handleRequestImprovement = async (text, type) => {
+  const handleRequestImprovement = useCallback(async (text, type) => {
     if (!text) return;
 
     setRightPanelTab('improvements');
@@ -352,7 +357,8 @@ function App() {
     });
 
     // Build AI config from settings.ai (single source of truth)
-    const ai = settings?.ai || {};
+    const { settings: latestSettings } = latestStateRef.current;
+    const ai = latestSettings?.ai || {};
     const imp = ai.improvements || {};
     const useSeparate = imp.separate;
 
@@ -391,20 +397,21 @@ function App() {
     } finally {
       setIsAiThinking(false);
     }
-  };
+  }, []);
 
-  const handleApplyImprovement = (original, improved) => {
+  const handleApplyImprovement = useCallback((original, improved) => {
     // Simple string replacement. 
     // Note: This relies on the text being unique enough or user accepting the first match.
     setContent(prev => prev.replace(original, improved));
     setPreviewContent(prev => prev.replace(original, improved)); // Immediate update
     setRightPanelTab('visualization');
     setImprovementData({ status: 'idle', originalText: '', improvedText: '' });
-  };
+  }, []);
 
-  const handleAddComment = async (text, selectionInfo) => {
+  const handleAddComment = useCallback(async (text, selectionInfo) => {
     // selectionInfo comes from Editor: { text, start, end, contextBefore, contextAfter, line, tag }
     if (!text || !selectionInfo) return;
+    const { metadata: latestMetadata } = latestStateRef.current;
 
     const newComment = {
       id: Date.now().toString(),
@@ -419,13 +426,14 @@ function App() {
       date: new Date().toISOString()
     };
 
-    const newComments = [...(metadata.comments || []), newComment];
+    const newComments = [...(latestMetadata.comments || []), newComment];
     await updateActiveFileComments(newComments);
     setRightPanelTab('comments');
-  };
+  }, []);
 
-  const handleReplyComment = async (commentId, replyText) => {
-    const newComments = (metadata.comments || []).map(c => {
+  const handleReplyComment = useCallback(async (commentId, replyText) => {
+    const { metadata: latestMetadata } = latestStateRef.current;
+    const newComments = (latestMetadata.comments || []).map(c => {
       if (c.id === commentId) {
         return {
           ...c,
@@ -439,41 +447,44 @@ function App() {
       return c;
     });
     await updateActiveFileComments(newComments);
-  };
+  }, []);
 
-  const handleResolveComment = async (commentId) => {
-    const newComments = (metadata.comments || []).map(c => {
+  const handleResolveComment = useCallback(async (commentId) => {
+    const { metadata: latestMetadata } = latestStateRef.current;
+    const newComments = (latestMetadata.comments || []).map(c => {
       if (c.id === commentId) {
         return { ...c, status: c.status === 'open' ? 'resolved' : 'open' };
       }
       return c;
     });
     await updateActiveFileComments(newComments);
-  };
+  }, []);
 
-  const handleDeleteComment = async (commentId) => {
-    const newComments = (metadata.comments || []).filter(c => c.id !== commentId);
+  const handleDeleteComment = useCallback(async (commentId) => {
+    const { metadata: latestMetadata } = latestStateRef.current;
+    const newComments = (latestMetadata.comments || []).filter(c => c.id !== commentId);
     await updateActiveFileComments(newComments);
-  };
+  }, []);
 
-  const updateActiveFileComments = async (newComments) => {
-    const newMeta = { ...metadata, comments: newComments };
+  const updateActiveFileComments = useCallback(async (newComments) => {
+    const { metadata: latestMetadata, currentFile: latestCurrentFile, content: latestContent, saveFile: latestSaveFile } = latestStateRef.current;
+    const newMeta = { ...latestMetadata, comments: newComments };
     setMetadata(newMeta);
     
-    if (currentFile.kind === 'md' && currentFile.handle) {
+    if (latestCurrentFile.kind === 'md' && latestCurrentFile.handle) {
       try {
         const metaString = Object.keys(newMeta).length > 0 ? yaml.dump(newMeta) : '';
         const fullContent = metaString
-          ? `---\n${metaString}---\n\n${content}`
-          : content;
+          ? `---\n${metaString}---\n\n${latestContent}`
+          : latestContent;
         
-        await saveFile(fullContent, currentFile.handle);
+        await latestSaveFile(fullContent, latestCurrentFile.handle);
         setIsDirty(false);
       } catch (e) {
         console.error("Failed to auto-save file metadata comments:", e);
       }
     }
-  };
+  }, []);
 
   // Validate comments against content on change (remove orphaned)
   useEffect(() => {
@@ -678,16 +689,17 @@ function App() {
     }
   };
 
-  const stringifyFileContent = () => {
-    if (currentFile.kind !== 'md') return content;
+  const stringifyFileContent = useCallback(() => {
+    const { currentFile: latestCurrentFile, metadata: latestMetadata, content: latestContent } = latestStateRef.current;
+    if (latestCurrentFile.kind !== 'md') return latestContent;
 
-    const metaString = Object.keys(metadata).length > 0 ? yaml.dump(metadata) : '';
+    const metaString = Object.keys(latestMetadata).length > 0 ? yaml.dump(latestMetadata) : '';
     return metaString
-      ? `---\n${metaString}---\n\n${content}`
-      : content;
-  };
+      ? `---\n${metaString}---\n\n${latestContent}`
+      : latestContent;
+  }, []);
 
-  const openDirectoryWithHandle = async (dir) => {
+  const openDirectoryWithHandle = useCallback(async (dir) => {
     if (!dir) return;
 
     let loadedMeta = { name: dir.name, mode: 'researcher' };
@@ -738,7 +750,7 @@ function App() {
         try {
           const defaultMeta = {
             name: dir.name,
-            mode: mode, // Use current mode
+            mode: latestStateRef.current.mode, // Use current mode
             livePreview: false
           };
           const metaHandle = await dir.getFileHandle('project_metadata.json', { create: true });
@@ -807,11 +819,12 @@ function App() {
     }
     // Reset dirty state after loading
     setTimeout(() => setIsDirty(false), 100);
-  };
+  }, [createSubDir, writeFileInDir, readFile]);
 
-  const handleOpen = async () => {
+  const handleOpen = useCallback(async () => {
+    const { isDirty: latestIsDirty, handleSave: latestHandleSave, openDirectoryWithHandle: latestOpenDirectoryWithHandle } = latestStateRef.current;
     // AUTOSAVE BEFORE SWITCHING
-    if (isDirty) await handleSave();
+    if (latestIsDirty) await latestHandleSave();
 
     setIsLoading(true);
     try {
@@ -820,8 +833,6 @@ function App() {
         setIsLoading(false);
         return;
       }
-
-      // setDirHandle is already done in openDirectory hook if successful, but we need 'dir' variable.
 
       // We don't know the mode yet. setViewState('editor') is fine.
       setViewState('editor');
@@ -840,7 +851,7 @@ function App() {
       setMode(detectedMode);
 
       await saveRecentProject(dir, dir.name, detectedMode);
-      await openDirectoryWithHandle(dir);
+      await latestOpenDirectoryWithHandle(dir);
     } catch (error) {
       if (error.name !== 'AbortError') {
         console.error("Open failed:", error);
@@ -848,30 +859,42 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [openDirectory]);
 
-  const handleSave = async (isSilent = false) => {
-    if (currentFile.kind === 'image') return; // Cannot save image changes yet
+  const handleSave = useCallback(async (isSilent = false) => {
+    const {
+      currentFile: latestCurrentFile,
+      dirHandle: latestDirHandle,
+      projectMetadata: latestProjectMetadata,
+      mode: latestMode,
+      metadata: latestMetadata,
+      fileHandle: latestFileHandle,
+      content: latestContent,
+      saveFile: latestSaveFile,
+      saveFileAs: latestSaveFileAs
+    } = latestStateRef.current;
+
+    if (latestCurrentFile.kind === 'image') return; // Cannot save image changes yet
 
     const fullContent = stringifyFileContent();
 
     try {
       // If we have a directory handle (Project Mode), always save the project metadata
-      if (dirHandle) {
-        await writeFileInDir(dirHandle, 'project_metadata.json', JSON.stringify(projectMetadata, null, 2));
+      if (latestDirHandle) {
+        await writeFileInDir(latestDirHandle, 'project_metadata.json', JSON.stringify(latestProjectMetadata, null, 2));
 
         // Ensure references folder exists if in a references-supporting mode and references are enabled
-        const isReferencesMode = mode === 'researcher' || mode === 'engineer' || mode === 'scholar';
-        const enableReferences = projectMetadata?.enableReferences !== false;
+        const isReferencesMode = latestMode === 'researcher' || latestMode === 'engineer' || latestMode === 'scholar';
+        const enableReferences = latestProjectMetadata?.enableReferences !== false;
         if (isReferencesMode && enableReferences) {
           try {
-            await dirHandle.getDirectoryHandle('references');
+            await latestDirHandle.getDirectoryHandle('references');
           } catch (e) {
             // Folder doesn't exist, create it and a default bib file if references are checked or showReferences is active
-            const showReferences = metadata?.useReferences ?? metadata?.showReferences;
+            const showReferences = latestMetadata?.useReferences ?? latestMetadata?.showReferences;
             if (showReferences) {
               try {
-                const refDir = await createSubDir(dirHandle, 'references');
+                const refDir = await createSubDir(latestDirHandle, 'references');
                 const bibContent = `@article{example2026,\n  author = {Author, An},\n  title = {A seminal work on the subject},\n  journal = {Journal of Interesting Results},\n  year = {2026},\n  volume = {42},\n  pages = {100-120}\n}`;
                 await writeFileInDir(refDir, 'references.bib', bibContent);
               } catch (createErr) {
@@ -881,24 +904,24 @@ function App() {
           }
         }
 
-        if (currentFile.handle) {
-          await saveFile(fullContent, currentFile.handle);
+        if (latestCurrentFile.handle) {
+          await latestSaveFile(fullContent, latestCurrentFile.handle);
         } else {
           // Fallback / New File in Project
-          const name = currentFile.name || 'main.md';
-          const handle = await writeFileInDir(dirHandle, name, fullContent);
+          const name = latestCurrentFile.name || 'main.md';
+          const handle = await writeFileInDir(latestDirHandle, name, fullContent);
           setFileHandle(handle);
           setCurrentFile(prev => ({ ...prev, handle }));
 
-          await saveRecentProject(dirHandle, projectMetadata.name, mode);
+          await saveRecentProject(latestDirHandle, latestProjectMetadata.name, latestMode);
         }
-        setPreviewContent(content);
+        setPreviewContent(latestContent);
         setIsDirty(false);
-      } else if (mode === 'researcher' && !isSilent) {
+      } else if (latestMode === 'researcher' && !isSilent) {
         // Saving a NEW Research Project - only if NOT silent
         const dir = await openDirectory();
 
-        await writeFileInDir(dir, 'project_metadata.json', JSON.stringify({ name: projectMetadata.name, mode: 'researcher' }, null, 2));
+        await writeFileInDir(dir, 'project_metadata.json', JSON.stringify({ name: latestProjectMetadata.name, mode: 'researcher' }, null, 2));
 
         const mainFileName = `main.md`;
         const mdHandle = await writeFileInDir(dir, mainFileName, fullContent);
@@ -908,18 +931,18 @@ function App() {
         setDirHandle(dir);
         setFileHandle(mdHandle);
         setCurrentFile({ name: mainFileName, kind: 'md', handle: mdHandle });
-        setPreviewContent(content);
+        setPreviewContent(latestContent);
         setIsDirty(false);
       } else {
         // Individual file mode
-        if (fileHandle) {
-          await saveFile(fullContent);
-          setPreviewContent(content);
+        if (latestFileHandle) {
+          await latestSaveFile(fullContent);
+          setPreviewContent(latestContent);
           setIsDirty(false);
         } else if (!isSilent) {
-          const success = await saveFileAs(fullContent);
+          const success = await latestSaveFileAs(fullContent);
           if (success) {
-            setPreviewContent(content);
+            setPreviewContent(latestContent);
             setIsDirty(false);
           }
         }
@@ -931,22 +954,19 @@ function App() {
         if (!isSilent) alert('Save failed: ' + err.message);
       }
     }
-  };
+  }, [scanNotesDir, openDirectory, createSubDir, writeFileInDir, stringifyFileContent]);
 
-  const handleNew = async () => {
+  const handleNew = useCallback(async () => {
+    const { isDirty: latestIsDirty, handleSave: latestHandleSave } = latestStateRef.current;
     // AUTOSAVE BEFORE SWITCHING
-    if (isDirty) await handleSave();
+    if (latestIsDirty) await latestHandleSave();
 
-    // If called from Editor, acts as "Clear/Close Project" or "New Buffer"
-    // User asked: "open or new document or continue... if new... create a subfolder"
-    // This handleNew is for the button in the Layout.
-    // If we are in welcome screen, we use createProject.
-    // If we are in editor, maybe we want to go back to welcome screen?
     setIsDirty(false);
-  };
+  }, []);
 
-  const goToWelcome = async () => {
-    if (isDirty) await handleSave();
+  const goToWelcome = useCallback(async () => {
+    const { isDirty: latestIsDirty, handleSave: latestHandleSave } = latestStateRef.current;
+    if (latestIsDirty) await latestHandleSave();
     setViewState('welcome');
     setDirHandle(null);
     setFileHandle(null);
@@ -954,22 +974,25 @@ function App() {
     setPreviewContent('');
     setMetadata({});
     setIsDirty(false);
-  };
+  }, []);
 
-  const removeRecentProject = async (projToRemove) => {
-    const updated = recentProjects.filter(p => {
-      if (projToRemove.path && p.path) {
-        return !(p.name === projToRemove.name && p.path === projToRemove.path);
-      }
-      return p.name !== projToRemove.name;
+  const removeRecentProject = useCallback(async (projToRemove) => {
+    setRecentProjects(prev => {
+      const updated = prev.filter(p => {
+        if (projToRemove.path && p.path) {
+          return !(p.name === projToRemove.name && p.path === projToRemove.path);
+        }
+        return p.name !== projToRemove.name;
+      });
+      saveRecentList(updated);
+      return updated;
     });
-    setRecentProjects(updated);
-    await saveRecentList(updated);
-  };
+  }, []);
 
-  const createProject = async (name, newMode, initializeEmpty = false) => {
+  const createProject = useCallback(async (name, newMode, initializeEmpty = false) => {
+    const { isDirty: latestIsDirty, handleSave: latestHandleSave, settings: latestSettings, openDirectoryWithHandle: latestOpenDirectoryWithHandle } = latestStateRef.current;
     // AUTOSAVE BEFORE SWITCHING
-    if (isDirty) await handleSave();
+    if (latestIsDirty) await latestHandleSave();
 
     setIsLoading(true);
     try {
@@ -1000,7 +1023,7 @@ function App() {
       const metadata = { name: safeName, mode: newMode };
       if (newMode === 'scholar') {
         metadata.course = safeName; // Default course name is project name
-        metadata.university = settings.affiliation || '';
+        metadata.university = latestSettings.affiliation || '';
       }
       await writeFileInDir(projectDir, 'project_metadata.json', JSON.stringify(metadata, null, 2));
 
@@ -1019,7 +1042,7 @@ function App() {
             const notesDir = await createSubDir(projectDir, 'notes');
             const ideasDir = await createSubDir(projectDir, 'ideas');
 
-            const journalBoilerplate = `---\ntitle: ${safeName}\nsubtitle: Lead Paragraph...\nauthor: ${settings.name || 'Journalist'}\nprofession: ${settings.profession || 'Press Reporter'}\nemail: ${settings.email || ''}\nphone: ${settings.phone || ''}\ndate: ${new Date().toISOString().split('T')[0]}\n---\n\n# ${safeName}\n\n[Location / Dateline]\n\nWrite your press article or report here...`;
+            const journalBoilerplate = `---\ntitle: ${safeName}\nsubtitle: Lead Paragraph...\nauthor: ${latestSettings.name || 'Journalist'}\nprofession: ${latestSettings.profession || 'Press Reporter'}\nemail: ${latestSettings.email || ''}\nphone: ${latestSettings.phone || ''}\ndate: ${new Date().toISOString().split('T')[0]}\n---\n\n# ${safeName}\n\n[Location / Dateline]\n\nWrite your press article or report here...`;
             const noteBoilerplate = `---\ntitle: Research & Sources\ntags:\n  - journalist\n  - notes\ncolor: "#339af0"\nlinks: []\n---\n\n# Research & Sources\n\nKeep track of interviews, background material, and investigative leads here.`;
             const ideaBoilerplate = `---\ntitle: Article Ideas\ntags:\n  - ideas\n  - brainstorming\n---\n\n# Article Ideas\n\nCollect angles, headlines, and narrative arcs for future pieces.`;
 
@@ -1036,7 +1059,7 @@ function App() {
             const ideasDir = await createSubDir(projectDir, 'ideas');
             const refDir = await createSubDir(projectDir, 'references');
 
-            const engBoilerplate = `---\ntitle: ${safeName}\nproject: ${safeName}\ndate: ${new Date().toISOString().split('T')[0]}\nauthors:\n  - name: ${settings.name || 'Engineer'}\n    affiliation: ${settings.affiliation || ''}\nclient: Client Name\nprojectNumber: ENG-2026-001\nrevision: Rev 0\nshowToC: true\n---\n\n# Executive Summary\n\nThis technical report provides the structural details and calculations for ${safeName}.\n\n# Design Criteria\n\nState the design assumptions, standards, and safety factors.\n\n# Results and Recommendations\n\nProvide a summary of the analysis and action items.`;
+            const engBoilerplate = `---\ntitle: ${safeName}\nproject: ${safeName}\ndate: ${new Date().toISOString().split('T')[0]}\nauthors:\n  - name: ${latestSettings.name || 'Engineer'}\n    affiliation: ${latestSettings.affiliation || ''}\nclient: Client Name\nprojectNumber: ENG-2026-001\nrevision: Rev 0\nshowToC: true\n---\n\n# Executive Summary\n\nThis technical report provides the structural details and calculations for ${safeName}.\n\n# Design Criteria\n\nState the design assumptions, standards, and safety factors.\n\n# Results and Recommendations\n\nProvide a summary of the analysis and action items.`;
             const noteBoilerplate = `---\ntitle: Site Inspection Notes\ntags:\n  - engineer\n  - calculations\ncolor: "#20c997"\nlinks: []\n---\n\n# Site Inspection Notes\n\nRecord physical observations, parameter values, and calculation checks here.`;
             const ideaBoilerplate = `---\ntitle: Engineering Solutions\ntags:\n  - ideas\n  - optimization\n---\n\n# Engineering Solutions\n\nBrainstorm structural alternatives, optimization opportunities, and design strategies.`;
             const bibContent = `@article{example2026,\n  author = {Author, An},\n  title = {A seminal work on the subject},\n  journal = {Journal of Interesting Results},\n  year = {2026},\n  volume = {42},\n  pages = {100-120}\n}`;
@@ -1056,9 +1079,9 @@ function App() {
             const lecturesDir = await createSubDir(projectDir, 'lectures');
             const refDir = await createSubDir(projectDir, 'references');
 
-            const lecture1Boilerplate = `---\ntitle: Lecture 1: Introduction\ncourse: ${safeName}\ndate: ${new Date().toLocaleDateString()}\nauthor: ${settings.name || 'Student Name'}\nshowCover: true\nobjectives:\n  - Understand the course scope\n  - Identify key syllabus items\n---\n\n# Lecture 1: Introduction\n\n**Date:** ${new Date().toLocaleDateString()}\n\n## Summary\nToday we introduced the course goals, reviewed the grading guidelines, and discussed the main themes.\n\n## Lecture Notes\n- Course covers advanced techniques in writing and analysis.\n- Review schedule and office hours.\n\n## Action Items / Homework\n- [ ] Complete the introduction survey`;
+            const lecture1Boilerplate = `---\ntitle: Lecture 1: Introduction\ncourse: ${safeName}\ndate: ${new Date().toLocaleDateString()}\nauthor: ${latestSettings.name || 'Student Name'}\nshowCover: true\nobjectives:\n  - Understand the course scope\n  - Identify key syllabus items\n---\n\n# Lecture 1: Introduction\n\n**Date:** ${new Date().toLocaleDateString()}\n\n## Summary\nToday we introduced the course goals, reviewed the grading guidelines, and discussed the main themes.\n\n## Lecture Notes\n- Course covers advanced techniques in writing and analysis.\n- Review schedule and office hours.\n\n## Action Items / Homework\n- [ ] Complete the introduction survey`;
 
-            const lecture2Boilerplate = `---\ntitle: Lecture 2: Core Principles\ncourse: ${safeName}\ndate: ${new Date().toLocaleDateString()}\nauthor: ${settings.name || 'Student Name'}\nshowCover: true\nobjectives:\n  - Define core terms\n  - Explore the conceptual model\n---\n\n# Lecture 2: Core Principles\n\n**Date:** ${new Date().toLocaleDateString()}\n\n## Summary\nWe discussed the theoretical definitions and established the fundamental guidelines.\n\n## Lecture Notes\n- **Theory A**: Basic description.\n- Recommended reading: Chapters 1 and 2.\n\n## Action Items / Homework\n- [ ] Review lecture slides`;
+            const lecture2Boilerplate = `---\ntitle: Lecture 2: Core Principles\ncourse: ${safeName}\ndate: ${new Date().toLocaleDateString()}\nauthor: ${latestSettings.name || 'Student Name'}\nshowCover: true\nobjectives:\n  - Define core terms\n  - Explore the conceptual model\n---\n\n# Lecture 2: Core Principles\n\n**Date:** ${new Date().toLocaleDateString()}\n\n## Summary\nWe discussed the theoretical definitions and established the fundamental guidelines.\n\n## Lecture Notes\n- **Theory A**: Basic description.\n- Recommended reading: Chapters 1 and 2.\n\n## Action Items / Homework\n- [ ] Review lecture slides`;
 
             const noteBoilerplate = `---\ntitle: Study Group Notes\ntags:\n  - scholar\n  - study\ncolor: "#fcc419"\nlinks: []\n---\n\n# Study Group Notes\n\nSummarize key topics from discussions with peers and preparation for exams.`;
             const ideaBoilerplate = `---\ntitle: Essay & Project Ideas\ntags:\n  - ideas\n  - term-paper\n---\n\n# Essay & Project Ideas\n\nBrainstorm topics for term papers, presentation outlines, and group projects.`;
@@ -1078,7 +1101,7 @@ function App() {
             const notesDir = await createSubDir(projectDir, 'notes');
             const ideasDir = await createSubDir(projectDir, 'ideas');
 
-            const scriptBoilerplate = `---\ntitle: ${safeName}\nauthor: ${settings.name || 'Screenwriter'}\nbasedOn: \ndate: ${new Date().toLocaleDateString()}\ncontact: |\n  ${settings.name || 'Screenwriter'}\n  ${settings.email || ''}\n  ${settings.phone || ''}\n---\n\n# PRELUDE\n\n[ACTION, LOCATION, ATMOSPHERE]\n\n**CHARACTER NAME**\n(Parenthetical)\nDialogue\n\n**CHARACTER NAME 2**\nDialogue \n\n---\n\n# SCENE 1\n\n...\n\n---\n\n# THE END`;
+            const scriptBoilerplate = `---\ntitle: ${safeName}\nauthor: ${latestSettings.name || 'Screenwriter'}\nbasedOn: \ndate: ${new Date().toLocaleDateString()}\ncontact: |\n  ${latestSettings.name || 'Screenwriter'}\n  ${latestSettings.email || ''}\n  ${latestSettings.phone || ''}\n---\n\n# PRELUDE\n\n[ACTION, LOCATION, ATMOSPHERE]\n\n**CHARACTER NAME**\n(Parenthetical)\nDialogue\n\n**CHARACTER NAME 2**\nDialogue \n\n---\n\n# SCENE 1\n\n...\n\n---\n\n# THE END`;
             const noteBoilerplate = `---\ntitle: Character Biographies\ntags:\n  - script\n  - characters\ncolor: "#f06595"\nlinks: []\n---\n\n# Character Biographies\n\nDefine key character arcs, motivations, backstory details, and personality traits.`;
             const ideaBoilerplate = `---\ntitle: Plot & Scene Beats\ntags:\n  - ideas\n  - structure\n---\n\n# Plot & Scene Beats\n\nBrainstorm story outline, key twists, pacing details, and thematic resolution points.`;
 
@@ -1096,7 +1119,7 @@ function App() {
             const ideasDir = await createSubDir(projectDir, 'ideas');
             const refDir = await createSubDir(projectDir, 'references');
 
-            const resBoilerplate = `---\ntitle: ${safeName}\nproject: ${safeName}\nauthors:\n  - name: ${settings.name || 'Researcher'}\n    affiliation: ${settings.affiliation || ''}\n    email: ${settings.email || ''}\ndate: ${new Date().toLocaleDateString()}\nabstract: |\n  This is the abstract for the research project. It should summarize the background, methodology, results, and conclusions of the paper.\n---\n\n# Introduction\n\nProvide an introduction to your research here.\n\n## Methodology\n\nDescribe your research methods.\n\n## Results\n\nPresent your findings and reference figures.\n\n## Discussion\n\nInterpret your results and link to the literature.`;
+            const resBoilerplate = `---\ntitle: ${safeName}\nproject: ${safeName}\nauthors:\n  - name: ${latestSettings.name || 'Researcher'}\n    affiliation: ${latestSettings.affiliation || ''}\n    email: ${latestSettings.email || ''}\ndate: ${new Date().toLocaleDateString()}\nabstract: |\n  This is the abstract for the research project. It should summarize the background, methodology, results, and conclusions of the paper.\n---\n\n# Introduction\n\nProvide an introduction to your research here.\n\n## Methodology\n\nDescribe your research methods.\n\n## Results\n\nPresent your findings and reference figures.\n\n## Discussion\n\nInterpret your results and link to the literature.`;
             const noteBoilerplate = `---\ntitle: Literature Review Notes\ntags:\n  - researcher\n  - literature\ncolor: "#845ef7"\nlinks: []\n---\n\n# Literature Review Notes\n\nSummarize key findings, citations, and conceptual definitions from your reference library.`;
             const ideaBoilerplate = `---\ntitle: Research Hypotheses\ntags:\n  - ideas\n  - hypotheses\n---\n\n# Research Hypotheses\n\nDocument future research directions, speculative ideas, and tentative explanations here.`;
             const bibContent = `@article{example2026,\n  author = {Author, An},\n  title = {A seminal work on the subject},\n  journal = {Journal of Interesting Results},\n  year = {2026},\n  volume = {42},\n  pages = {100-120}\n}`;
@@ -1118,7 +1141,7 @@ function App() {
         setCurrentFile({ name: mainFileName, kind: 'md', handle: mainFileHandle });
       } else {
         // Fallback if no file created (scholar might be tricky if I don't set one)
-        await openDirectoryWithHandle(projectDir);
+        await latestOpenDirectoryWithHandle(projectDir);
       }
 
       // 4. Open
@@ -1130,19 +1153,20 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [openDirectory, createSubDir, writeFileInDir, readFile]);
 
   // Open PDF export modal - show file picker
-  const handleExport = async () => {
-    if (!dirHandle) {
+  const handleExport = useCallback(async () => {
+    const { dirHandle: latestDirHandle } = latestStateRef.current;
+    if (!latestDirHandle) {
       alert('Please open a project first to use PDF export.');
       return;
     }
     setShowPdfModal(true);
-  };
+  }, []);
 
   // Called when user confirms a file in the PdfExportModal
-  const handlePdfExport = async (selectedFile) => {
+  const handlePdfExport = useCallback(async (selectedFile) => {
     setShowPdfModal(false);
     setIsLoading(true);
     try {
@@ -1171,8 +1195,7 @@ function App() {
       alert('Failed to prepare file for export: ' + (e.message || e));
       setIsLoading(false);
     }
-    // Note: Do not setIsLoading(false) here if successful, because the useEffect will take over and hide loading when done.
-  };
+  }, []);
 
   // Trigger print when printMode becomes true, restore after
   useEffect(() => {
@@ -1243,7 +1266,8 @@ function App() {
     return () => clearTimeout(timer);
   }, [printMode, printData.filename]);
 
-  const handleImport = async () => {
+  const handleImport = useCallback(async () => {
+    const { dirHandle: latestDirHandle, handleFileSelect: latestHandleFileSelect } = latestStateRef.current;
     try {
       const [handle] = await window.showOpenFilePicker({
         types: [{
@@ -1268,10 +1292,10 @@ function App() {
       md = md.replace(/\\author\{(.*?)\}/g, '*Author: $1*');
 
       const importedName = 'main_imported.md';
-      if (dirHandle) {
-        const newHandle = await writeFileInDir(dirHandle, importedName, md);
+      if (latestDirHandle) {
+        const newHandle = await writeFileInDir(latestDirHandle, importedName, md);
         setRefreshTrigger(prev => prev + 1);
-        handleFileSelect(newHandle);
+        latestHandleFileSelect(newHandle);
         alert('Imported as main_imported.md');
       } else {
         setContent(md);
@@ -1284,12 +1308,14 @@ function App() {
     } catch (e) {
       if (e.name !== 'AbortError') console.error('Import failed', e);
     }
-  };
+  }, [writeFileInDir]);
+
 
   // Helper for FileExplorer selection
-  const handleFileSelect = async (handle, path = '') => {
+  const handleFileSelect = useCallback(async (handle, path = '') => {
+    const { isDirty: latestIsDirty, handleSave: latestHandleSave } = latestStateRef.current;
     // AUTOSAVE BEFORE SWITCHING
-    if (isDirty) await handleSave();
+    if (latestIsDirty) await latestHandleSave();
 
     // LOADING REMOVED as requested
     try {
@@ -1319,9 +1345,10 @@ function App() {
     } finally {
       // No loading state to turn off
     }
-  };
+  }, []);
 
-  const onUploadImage = async () => {
+  const onUploadImage = useCallback(async () => {
+    const { mode: latestMode, dirHandle: latestDirHandle, projectMetadata: latestProjectMetadata } = latestStateRef.current;
     try {
       const [handle] = await window.showOpenFilePicker({
         types: [{
@@ -1332,13 +1359,13 @@ function App() {
       const file = await handle.getFile();
 
       let src = '';
-      if (mode === 'researcher' && dirHandle) {
-        const folderName = projectMetadata.figuresFolder || 'figures';
+      if (latestMode === 'researcher' && latestDirHandle) {
+        const folderName = latestProjectMetadata.figuresFolder || 'figures';
         let figuresDir;
         try {
-          figuresDir = await dirHandle.getDirectoryHandle(folderName, { create: true });
+          figuresDir = await latestDirHandle.getDirectoryHandle(folderName, { create: true });
         } catch (e) {
-          figuresDir = dirHandle;
+          figuresDir = latestDirHandle;
         }
         await writeFileInDir(figuresDir, file.name, file);
         src = `${folderName}/${file.name}`;
@@ -1353,7 +1380,34 @@ function App() {
       if (e.name !== 'AbortError') console.error(e);
       return null;
     }
-  };
+  }, []);
+
+  const onPasteImage = useCallback(async (file) => {
+    const { mode: latestMode, dirHandle: latestDirHandle, projectMetadata: latestProjectMetadata } = latestStateRef.current;
+    try {
+      let src = '';
+      if (latestDirHandle) {
+        const folderName = latestProjectMetadata.figuresFolder || 'figures';
+        let figuresDir;
+        try {
+          figuresDir = await latestDirHandle.getDirectoryHandle(folderName, { create: true });
+        } catch (e) {
+          figuresDir = latestDirHandle;
+        }
+        await writeFileInDir(figuresDir, file.name, file);
+        src = `${folderName}/${file.name}`;
+      } else {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        await new Promise(resolve => reader.onload = resolve);
+        src = reader.result;
+      }
+      return { alt: file.name.replace(/\.[^/.]+$/, ''), src };
+    } catch (e) {
+      console.error('Paste image failed:', e);
+      return null;
+    }
+  }, []);
 
   const copyDirectory = async (srcHandle, destHandle) => {
     for await (const entry of srcHandle.values()) {
@@ -1371,7 +1425,8 @@ function App() {
     }
   };
 
-  const handleRename = async (handle, newName, pathPrefix = '') => {
+  const handleRename = useCallback(async (handle, newName, pathPrefix = '') => {
+    const { currentFile: latestCurrentFile, dirHandle: latestDirHandle } = latestStateRef.current;
     if (!handle || !newName || newName === handle.name) return;
 
     // Prevent renaming the project metadata file
@@ -1382,11 +1437,11 @@ function App() {
 
     // Check if we are renaming the currently active file
     let isCurrentActive = false;
-    if (currentFile.handle) {
-      if (currentFile.handle === handle || currentFile.handle.name === handle.name) {
+    if (latestCurrentFile.handle) {
+      if (latestCurrentFile.handle === handle || latestCurrentFile.handle.name === handle.name) {
         isCurrentActive = true;
-      } else if (currentFile.handle.isSameEntry) {
-        try { isCurrentActive = await currentFile.handle.isSameEntry(handle); } catch (e) { }
+      } else if (latestCurrentFile.handle.isSameEntry) {
+        try { isCurrentActive = await latestCurrentFile.handle.isSameEntry(handle); } catch (e) { }
       }
     }
 
@@ -1397,7 +1452,7 @@ function App() {
 
         // If we renamed the currently open file, update its name in state
         if (isCurrentActive) {
-          const parts = currentFile.name.split('/');
+          const parts = latestCurrentFile.name.split('/');
           parts.pop();
           const newDisplayName = parts.length > 0 ? [...parts, newName].join('/') : newName;
           setCurrentFile(prev => ({ ...prev, name: newDisplayName }));
@@ -1409,7 +1464,7 @@ function App() {
 
       // 2. Fallback: Polyfill for Files or Directories
       // Resolve parent directory handle from pathPrefix
-      let parent = dirHandle;
+      let parent = latestDirHandle;
       if (pathPrefix) {
         const parts = pathPrefix.split('/').filter(p => !!p);
         for (const part of parts) {
@@ -1438,7 +1493,7 @@ function App() {
         // Update state if currently open
         if (isCurrentActive) {
           setFileHandle(newFileHandle);
-          const parts = currentFile.name.split('/');
+          const parts = latestCurrentFile.name.split('/');
           parts.pop();
           const newDisplayName = parts.length > 0 ? [...parts, newName].join('/') : newName;
           setCurrentFile(prev => ({ ...prev, name: newDisplayName, handle: newFileHandle }));
@@ -1462,9 +1517,9 @@ function App() {
       console.error('Rename failed', e);
       alert('Rename failed: ' + e.message);
     }
-  };
+  }, []);
 
-  const handleMove = async (handle, targetDirHandle) => {
+  const handleMove = useCallback(async (handle, targetDirHandle) => {
     if (!handle || !targetDirHandle) return;
     try {
       if (handle.move) {
@@ -1477,9 +1532,9 @@ function App() {
       console.error('Move failed', e);
       alert('Move failed: ' + e.message);
     }
-  };
+  }, []);
 
-  const handleExplorerStateChange = (state) => {
+  const handleExplorerStateChange = useCallback((state) => {
     setProjectMetadata(prev => ({
       ...prev,
       explorerState: {
@@ -1487,9 +1542,9 @@ function App() {
         ...state
       }
     }));
-  };
+  }, []);
 
-  const handleOrderChange = (parentPath, newOrder) => {
+  const handleOrderChange = useCallback((parentPath, newOrder) => {
     setProjectMetadata(prev => {
       const currentOrder = prev.explorerOrder || {};
       return {
@@ -1500,17 +1555,18 @@ function App() {
         }
       };
     });
-  };
+  }, []);
 
   const getDefaultMetadata = (currentMode) => {
+    const { settings: latestSettings, projectMetadata: latestProjectMetadata } = latestStateRef.current;
     if (currentMode === 'engineer') {
       return {
         authors: [{
-          name: settings.name || '',
-          affiliation: settings.affiliation || '',
-          company: settings.company || '',
-          email: settings.email || '',
-          phone: settings.phone || ''
+          name: latestSettings.name || '',
+          affiliation: latestSettings.affiliation || '',
+          company: latestSettings.company || '',
+          email: latestSettings.email || '',
+          phone: latestSettings.phone || ''
         }],
         showToC: true,
         client: '',
@@ -1521,36 +1577,36 @@ function App() {
     } else if (currentMode === 'researcher') {
       return {
         authors: [{
-          name: settings.name || '',
-          affiliation: settings.affiliation || '',
-          company: settings.company || '',
-          email: settings.email || '',
-          phone: settings.phone || ''
+          name: latestSettings.name || '',
+          affiliation: latestSettings.affiliation || '',
+          company: latestSettings.company || '',
+          email: latestSettings.email || '',
+          phone: latestSettings.phone || ''
         }]
       };
     } else if (currentMode === 'scholar') {
       return {
         title: '',
-        course: projectMetadata.course || projectMetadata.name || '',
+        course: latestProjectMetadata.course || latestProjectMetadata.name || '',
         date: new Date().toLocaleDateString(),
-        author: settings.name || '',
+        author: latestSettings.name || '',
         showCover: true,
         objectives: ['']
       };
     } else if (currentMode === 'journalist') {
       return {
-        author: settings.name || '',
-        profession: settings.profession || '',
-        email: settings.email || '',
-        phone: settings.phone || '',
+        author: latestSettings.name || '',
+        profession: latestSettings.profession || '',
+        email: latestSettings.email || '',
+        phone: latestSettings.phone || '',
         date: new Date().toISOString().split('T')[0]
       };
     } else if (currentMode === 'scriptwriter') {
       return {
-        author: settings.name || '',
-        profession: settings.profession || '',
-        email: settings.email || '',
-        phone: settings.phone || '',
+        author: latestSettings.name || '',
+        profession: latestSettings.profession || '',
+        email: latestSettings.email || '',
+        phone: latestSettings.phone || '',
         basedOn: '',
         date: new Date().toISOString().split('T')[0]
       };
@@ -1558,15 +1614,16 @@ function App() {
     return {};
   };
 
-  const handleCreateFile = async (targetDirHandle = null, targetPath = '', suggestedName = 'newfile.md') => {
-    const destination = targetDirHandle || dirHandle;
+  const handleCreateFile = useCallback(async (targetDirHandle = null, targetPath = '', suggestedName = 'newfile.md') => {
+    const { dirHandle: latestDirHandle, mode: latestMode } = latestStateRef.current;
+    const destination = targetDirHandle || latestDirHandle;
     if (!destination) return;
     const inFolderHint = targetPath ? ` in ${targetPath}` : '';
     const name = prompt(`File name${inFolderHint}:`, suggestedName);
     if (name) {
       let initialContent = '';
       if (name.endsWith('.md')) {
-        const defaults = getDefaultMetadata(mode);
+        const defaults = getDefaultMetadata(latestMode);
         if (Object.keys(defaults).length > 0) {
           initialContent = `---\n${yaml.dump(defaults)}---\n\n# ${name.replace('.md', '')}\n\n`;
         }
@@ -1574,22 +1631,24 @@ function App() {
       await writeFileInDir(destination, name, initialContent);
       setRefreshTrigger(prev => prev + 1);
     }
-  };
+  }, []);
 
-  const handleUpdateProjectSettings = async (newMeta) => {
+  const handleUpdateProjectSettings = useCallback(async (newMeta) => {
+    const { dirHandle: latestDirHandle } = latestStateRef.current;
     setProjectMetadata(newMeta);
-    if (dirHandle) {
+    if (latestDirHandle) {
       try {
-        await writeFileInDir(dirHandle, 'project_metadata.json', JSON.stringify(newMeta, null, 2));
+        await writeFileInDir(latestDirHandle, 'project_metadata.json', JSON.stringify(newMeta, null, 2));
       } catch (e) {
         console.error('Failed to save settings', e);
       }
     }
-  };
+  }, [writeFileInDir]);
 
 
-  const handleCreateFolder = async (targetDirHandle = null, targetPath = '') => {
-    const destination = targetDirHandle || dirHandle;
+  const handleCreateFolder = useCallback(async (targetDirHandle = null, targetPath = '') => {
+    const { dirHandle: latestDirHandle } = latestStateRef.current;
+    const destination = targetDirHandle || latestDirHandle;
     if (!destination) return;
     const inFolderHint = targetPath ? ` in ${targetPath}` : '';
     const name = prompt(`Folder name${inFolderHint}:`, 'new-folder');
@@ -1597,31 +1656,32 @@ function App() {
       await createSubDir(destination, name);
       setRefreshTrigger(prev => prev + 1);
     }
-  };
+  }, []);
 
-  const handleDelete = async (handle) => {
+  const handleDelete = useCallback(async (handle) => {
+    const { dirHandle: latestDirHandle, currentFile: latestCurrentFile } = latestStateRef.current;
     try {
       if (handle.kind === 'file') {
         // For files, we use remove() if supported
         if (handle.remove) {
           await handle.remove();
-        } else if (dirHandle) {
-          await dirHandle.removeEntry(handle.name);
+        } else if (latestDirHandle) {
+          await latestDirHandle.removeEntry(handle.name);
         }
       } else if (handle.kind === 'directory') {
         // For directories, use removeEntry with recursive: true
-        if (dirHandle) {
-          await dirHandle.removeEntry(handle.name, { recursive: true });
+        if (latestDirHandle) {
+          await latestDirHandle.removeEntry(handle.name, { recursive: true });
         }
       }
 
       // If deleted file (or a folder containing it) was open, clear editor
       let isActiveDeleted = false;
-      if (currentFile.handle) {
-        if (currentFile.handle === handle) {
+      if (latestCurrentFile.handle) {
+        if (latestCurrentFile.handle === handle) {
           isActiveDeleted = true;
-        } else if (currentFile.handle.isSameEntry) {
-          try { isActiveDeleted = await currentFile.handle.isSameEntry(handle); } catch (e) { }
+        } else if (latestCurrentFile.handle.isSameEntry) {
+          try { isActiveDeleted = await latestCurrentFile.handle.isSameEntry(handle); } catch (e) { }
         }
       }
 
@@ -1638,7 +1698,7 @@ function App() {
       console.error('Delete failed', e);
       alert('Failed to delete: ' + e.message);
     }
-  };
+  }, []);
 
   // Render Logic
   const renderLeft = () => (
@@ -1653,11 +1713,11 @@ function App() {
       onCreateFile={handleCreateFile}
       onCreateFolder={handleCreateFolder}
       refreshTrigger={refreshTrigger}
-      onRefresh={() => setRefreshTrigger(prev => prev + 1)}
-      initialExpandedFolders={(projectMetadata.explorerState && projectMetadata.explorerState.expandedFolders) || {}}
+      onRefresh={handleRefresh}
+      initialExpandedFolders={projectMetadata?.explorerState?.expandedFolders || EMPTY_OBJECT}
       onExplorerStateChange={handleExplorerStateChange}
       onMove={handleMove}
-      customOrder={projectMetadata.explorerOrder || {}}
+      customOrder={projectMetadata.explorerOrder || EMPTY_OBJECT}
       onOrderChange={handleOrderChange}
       projectMetadata={projectMetadata}
     />
@@ -1692,6 +1752,7 @@ function App() {
             onChange={setContent}
             mode={mode}
             onUploadImage={onUploadImage}
+            onPasteImage={onPasteImage}
             settings={settings}
             projectMetadata={projectMetadata}
             onAiThinking={setIsAiThinking}
@@ -1710,8 +1771,16 @@ function App() {
   );
 
   const handleUpdateFromPreview = useCallback((val) => {
-    setContent(val);
-    setPreviewContent(val);
+    if (typeof val === 'function') {
+      setContent(prev => {
+        const next = val(prev);
+        setPreviewContent(next);
+        return next;
+      });
+    } else {
+      setContent(val);
+      setPreviewContent(val);
+    }
   }, []);
 
   const renderRight = () => (
@@ -1732,16 +1801,16 @@ function App() {
       onTabChange={setRightPanelTab}
       improvementData={improvementData}
       onApplyImprovement={handleApplyImprovement}
-      onRetryImprovement={(text, type) => handleRequestImprovement(text, type)}
+      onRetryImprovement={handleRequestImprovement}
 
-      // Comments
-      editorSelection={editorSelection}
+      // Comments - only pass changing values if comments tab is active
+      editorSelection={rightPanelTab === 'comments' ? editorSelection : null}
       onAddComment={handleAddComment}
       onReplyComment={handleReplyComment}
       onResolveComment={handleResolveComment}
       onDeleteComment={handleDeleteComment}
-      commentPositions={commentPositions}
-      editorScrollTop={editorScrollTop}
+      commentPositions={rightPanelTab === 'comments' ? commentPositions : EMPTY_ARRAY}
+      editorScrollTop={rightPanelTab === 'comments' ? editorScrollTop : 0}
 
       // Notes Graph
       hasNotesDir={hasNotesDir}
@@ -1754,9 +1823,29 @@ function App() {
       hasIdeasDir={hasIdeasDir}
       isEditingNote={!!(currentFile.name && (currentFile.name.startsWith('notes/') || currentFile.name.includes('/notes/')))}
       isEditingIdea={!!(currentFile.name && (currentFile.name.startsWith('ideas/') || currentFile.name.includes('/ideas/')))}
-      currentFileContent={content}
+      // Ideas Graph only needs content when active
+      currentFileContent={rightPanelTab === 'ideas-graph' ? content : ''}
     />
   );
+
+  latestStateRef.current = { 
+    content, 
+    metadata, 
+    currentFile, 
+    saveFile, 
+    isDirty, 
+    handleSave, 
+    mode, 
+    dirHandle, 
+    projectMetadata,
+    settings,
+    openDirectoryWithHandle,
+    saveFileAs,
+    createSubDir,
+    writeFileInDir,
+    readFile,
+    handleFileSelect
+  };
 
   return (
     <>
