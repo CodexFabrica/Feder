@@ -107,6 +107,35 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
         }
     };
 
+    const insertLinePrefix = (prefix) => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+
+        textarea.focus();
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const text = textarea.value;
+        const selectedText = text.substring(start, end);
+        const lines = selectedText.split('\n');
+        const replacement = lines.map(line => prefix + line).join('\n');
+
+        const success = document.execCommand('insertText', false, replacement);
+
+        if (!success) {
+            const newText = text.substring(0, start) + replacement + text.substring(end);
+            onChange(newText);
+
+            setTimeout(() => {
+                textarea.focus();
+                textarea.setSelectionRange(start, start + replacement.length);
+            }, 0);
+        } else {
+            setTimeout(() => {
+                textarea.setSelectionRange(start, start + replacement.length);
+            }, 0);
+        }
+    };
+
     const updateCursor = useCallback(() => {
         const textarea = textareaRef.current;
         if (!textarea) return;
@@ -956,6 +985,25 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
                             lastContextRef.current = '';
                             fetchSuggestion();
                         }
+                        // Selection formatting shortcuts: wrap or line-prefix selected text
+                        if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+                            const hasSelection = e.target.selectionStart !== e.target.selectionEnd;
+                            if (hasSelection) {
+                                if (e.key === '*') {
+                                    e.preventDefault();
+                                    insertText('*', '*');
+                                } else if (e.key === '$') {
+                                    e.preventDefault();
+                                    insertText('$', '$');
+                                } else if (e.key === '>') {
+                                    e.preventDefault();
+                                    insertLinePrefix('> ');
+                                } else if (e.key === '#') {
+                                    e.preventDefault();
+                                    insertLinePrefix('# ');
+                                }
+                            }
+                        }
                     }}
                     onKeyUp={updateCursor}
                     onClick={updateCursor}
@@ -1137,6 +1185,28 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
                                                 Cite items from your BibTeX bibliography file (`references.bib`). Renders in APA narrative or parenthetical styling.
                                             </div>
                                             <pre style={{ margin: 0, padding: '8px', background: 'var(--bg-panel)', borderRadius: '6px', fontSize: '0.78rem', border: '1px solid var(--border-color)', overflowX: 'auto', color: 'var(--text-primary)' }}><code>{"Parenthetical: [@einstein1905]\nNarrative: [text@einstein1905]"}</code></pre>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Keyboard Shortcuts */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                <h3 style={{ margin: '8px 0 0 0', color: 'var(--accent-color)', fontSize: '1.1rem', fontWeight: 600 }}>Keyboard Shortcuts</h3>
+                                
+                                <div style={{ background: 'var(--bg-app)', padding: '18px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                    <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '6px', color: 'var(--text-primary)' }}>Selection Formatting Shortcuts</div>
+                                    <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '8px', lineHeight: 1.4 }}>
+                                        Select text and press the shortcut key to format it instantly. Wrap shortcuts surround the selected text; line prefix shortcuts add a prefix to every selected line.
+                                    </div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                                        <div>
+                                            <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>Wrap Shortcuts</div>
+                                            <pre style={{ margin: 0, padding: '8px', background: 'var(--bg-panel)', borderRadius: '6px', fontSize: '0.78rem', border: '1px solid var(--border-color)', overflowX: 'auto', color: 'var(--text-primary)' }}><code>{"Select + * \u2192 *italic text*\nSelect + $ \u2192 $inline equation$"}</code></pre>
+                                        </div>
+                                        <div>
+                                            <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>Line Prefix Shortcuts</div>
+                                            <pre style={{ margin: 0, padding: '8px', background: 'var(--bg-panel)', borderRadius: '6px', fontSize: '0.78rem', border: '1px solid var(--border-color)', overflowX: 'auto', color: 'var(--text-primary)' }}><code>{"Select lines + > \u2192 > quoted lines\nSelect lines + # \u2192 # heading lines"}</code></pre>
                                         </div>
                                     </div>
                                 </div>
