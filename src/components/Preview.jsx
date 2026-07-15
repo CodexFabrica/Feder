@@ -636,7 +636,7 @@ const MarkdownPreview = React.memo(function MarkdownPreview({ content, metadata,
 
     const { client, projectNumber, date, revision, checkedBy, approvedBy, basedOn, contact, profession, course, showCover, objectives, accentColor } = metadata || {};
 
-    const activeAccentColor = accentColor || '#9747ff';
+    const activeAccentColor = accentColor || projectMetadata?.accentColor || '#0984e3';
 
     const displayDate = safeDate(date) || new Date().toLocaleDateString();
 

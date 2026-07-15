@@ -767,3 +767,15 @@ input:checked+.slider:before {
   background: var(--border-color);
   margin: 4px 0;
 }
+
+/* Custom Accent Color Styles for Titles & Headings */
+.preview-title,
+.eng-report-title,
+.script-title,
+.scholar-lecture-title,
+.journal-title,
+.preview-content h1,
+.preview-content h2,
+.preview-content h3 {
+  color: var(--accent-color);
+}

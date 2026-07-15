@@ -1748,6 +1748,7 @@ function App() {
       ) : (
         <div className="editor-container" style={{ flex: 1, overflow: 'hidden' }}>
           <Editor
+            key={currentFile.name || 'empty'}
             value={content}
             onChange={setContent}
             mode={mode}

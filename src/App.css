@@ -1689,4 +1689,22 @@ input[type=number].clean-number {
     background: rgba(0, 102, 204, 0.12) !important;
     border-color: rgba(0, 102, 204, 0.3) !important;
     box-shadow: 0 2px 8px rgba(0, 102, 204, 0.1) !important;
+}
+
+/* Folding Gutter & Chevron Styles */
+.folding-chevron-btn {
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    opacity: 0.4;
+}
+
+.folding-gutter:hover .folding-chevron-btn,
+.folding-chevron-btn:hover {
+    opacity: 1;
+}
+
+.folding-chevron-btn:hover {
+    background: var(--hover-bg) !important;
+    color: var(--accent-color) !important;
+    border-color: var(--accent-color) !important;
+    transform: scale(1.08);
 }

@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
-import { Bold, Italic, Underline, Heading1, Heading2, Image, Link, List, Quote, Code, ImagePlus, Sparkles, MessageSquare, BookMarked, Sigma, Table, ChevronDown, BookOpen, X } from 'lucide-react';
+import { Bold, Italic, Underline, Heading1, Heading2, Image, Link, List, Quote, Code, ImagePlus, Sparkles, MessageSquare, BookMarked, Sigma, Table, ChevronDown, ChevronRight, BookOpen, X } from 'lucide-react';
 import { requestInlineSuggestion } from '../utils/aiSuggestions';
 
 export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, settings, projectMetadata, onAiThinking, onRegisterCancel, onRequestImprovement, onSelectionChange, comments, commentTags, onAddComment, onCommentPositionsChange, onEditorScrollChange }) {
@@ -8,6 +8,271 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
     const ghostRef = useRef(null);
     const positionMirrorRef = useRef(null);
     
+    const gutterRef = useRef(null);
+    const pendingCursorRestoreRef = useRef(null);
+
+    // Settings for highlighting & folding
+    const editorColorizeHeadings = projectMetadata?.editorColorizeHeadings ?? true;
+    const editorHeadingColorSource = projectMetadata?.editorHeadingColorSource ?? 'accent';
+    const editorHeadingColor = projectMetadata?.editorHeadingColor;
+    const editorColorizeCrossRefs = projectMetadata?.editorColorizeCrossRefs ?? true;
+    const editorCrossRefColor = projectMetadata?.editorCrossRefColor;
+    const editorColorizeFigures = projectMetadata?.editorColorizeFigures ?? true;
+    const editorFigureColor = projectMetadata?.editorFigureColor;
+    const editorColorizeEquations = projectMetadata?.editorColorizeEquations ?? true;
+    const editorEquationColor = projectMetadata?.editorEquationColor;
+    const editorEnableFolding = projectMetadata?.editorEnableFolding ?? true;
+
+    const activeTheme = projectMetadata?.theme || 'light';
+
+    const resolvedHeadingColor = useMemo(() => {
+        if (editorHeadingColorSource === 'accent') {
+            return projectMetadata?.accentColor || '#0984e3';
+        }
+        return editorHeadingColor || projectMetadata?.accentColor || '#0984e3';
+    }, [editorHeadingColorSource, editorHeadingColor, projectMetadata?.accentColor]);
+
+    const resolvedCrossRefColor = useMemo(() => {
+        if (editorCrossRefColor) return editorCrossRefColor;
+        switch (activeTheme) {
+            case 'dark': return '#58a6ff';
+            case 'semi-dark': return '#06b6d4';
+            case 'semi-light': return '#3e2723';
+            default: return '#0066cc';
+        }
+    }, [editorCrossRefColor, activeTheme]);
+
+    const resolvedFigureColor = useMemo(() => {
+        if (editorFigureColor) return editorFigureColor;
+        switch (activeTheme) {
+            case 'dark': return '#8b949e';
+            case 'semi-dark': return '#94a3b8';
+            case 'semi-light': return '#8d6e63';
+            default: return '#7f8c8d';
+        }
+    }, [editorFigureColor, activeTheme]);
+
+    const resolvedEquationColor = useMemo(() => {
+        if (editorEquationColor) return editorEquationColor;
+        switch (activeTheme) {
+            case 'dark': return '#4fa8ff';
+            case 'semi-dark': return '#22d3ee';
+            case 'semi-light': return '#0f766e';
+            default: return '#0b7285';
+        }
+    }, [editorEquationColor, activeTheme]);
+
+    const getHeadingLevel = (line) => {
+        const match = line.match(/^\s*(#{1,2})\s+/);
+        return match ? match[1].length : 0;
+    };
+
+    // Folding states
+    const [collapsedHeadingLines, setCollapsedHeadingLines] = useState(new Set());
+    const [headingPositions, setHeadingPositions] = useState([]);
+
+    // Compute maps between full and visible text
+    const { visibleText, visibleToFullMap, fullToVisibleMap } = useMemo(() => {
+        const lines = value.split('\n');
+        let visibleStr = '';
+        const v2f = [];
+        const f2v = new Array(value.length + 1).fill(-1);
+
+        let fullIdx = 0;
+        let visibleIdx = 0;
+
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+            const line = lines[lineIndex];
+            const lvl = getHeadingLevel(line);
+            
+            if (lineIndex > 0) {
+                visibleStr += '\n';
+                v2f.push(fullIdx);
+                f2v[fullIdx] = visibleIdx;
+                fullIdx += 1;
+                visibleIdx += 1;
+            }
+            
+            const isCollapsed = lvl > 0 && collapsedHeadingLines.has(lineIndex);
+            
+            if (isCollapsed) {
+                const startVisPos = visibleStr.length;
+                const lineText = line + ' ⋯';
+                visibleStr += lineText;
+                
+                for (let k = 0; k < lineText.length; k++) {
+                    v2f.push(fullIdx + Math.min(k, line.length));
+                }
+                
+                // Find next heading of same or higher level
+                let j = lineIndex + 1;
+                while (j < lines.length) {
+                    const nextLvl = getHeadingLevel(lines[j]);
+                    if (nextLvl > 0 && nextLvl <= lvl) {
+                        break;
+                    }
+                    j++;
+                }
+                
+                // Map the full text indices of the collapsed region to the placeholder's end
+                const collapsedStartFull = fullIdx;
+                let collapsedEndFull = fullIdx + line.length;
+                for (let lIndex = lineIndex + 1; lIndex < j; lIndex++) {
+                    collapsedEndFull += 1 + lines[lIndex].length;
+                }
+                
+                for (let idx = collapsedStartFull; idx < collapsedEndFull; idx++) {
+                    f2v[idx] = startVisPos + Math.min(idx - collapsedStartFull, line.length);
+                }
+                
+                fullIdx = collapsedEndFull;
+                visibleIdx += lineText.length;
+                lineIndex = j - 1;
+            } else {
+                for (let k = 0; k < line.length; k++) {
+                    v2f.push(fullIdx + k);
+                    f2v[fullIdx + k] = visibleIdx + k;
+                }
+                visibleStr += line;
+                fullIdx += line.length;
+                visibleIdx += line.length;
+            }
+        }
+        
+        v2f.push(fullIdx);
+        f2v[fullIdx] = visibleIdx;
+
+        return { visibleText: visibleStr, visibleToFullMap: v2f, fullToVisibleMap: f2v };
+    }, [value, collapsedHeadingLines]);
+
+    // Find single edit helper
+    function findSingleEdit(oldStr, newStr) {
+        let start = 0;
+        while (start < oldStr.length && start < newStr.length && oldStr[start] === newStr[start]) {
+            start++;
+        }
+        let oldEnd = oldStr.length;
+        let newEnd = newStr.length;
+        while (oldEnd > start && newEnd > start && oldStr[oldEnd - 1] === newStr[newEnd - 1]) {
+            oldEnd--;
+            newEnd--;
+        }
+        return {
+            start,
+            deletedLength: oldEnd - start,
+            insertedText: newStr.substring(start, newEnd)
+        };
+    }
+
+    const handleTextareaChange = (e) => {
+        const newVisibleText = e.target.value;
+        const edit = findSingleEdit(visibleText, newVisibleText);
+        const startFull = visibleToFullMap[edit.start] || 0;
+        const endFull = visibleToFullMap[edit.start + edit.deletedLength] || 0;
+        const newFullText = value.substring(0, startFull) + edit.insertedText + value.substring(endFull);
+        onChange(newFullText);
+    };
+
+    // Toggle collapse state
+    const toggleSectionCollapse = (originalLineIndex) => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        
+        const curStartVis = textarea.selectionStart;
+        const curEndVis = textarea.selectionEnd;
+        const curStartFull = visibleToFullMap[curStartVis] || 0;
+        const curEndFull = visibleToFullMap[curEndVis] || 0;
+        
+        setCollapsedHeadingLines(prev => {
+            const next = new Set(prev);
+            if (next.has(originalLineIndex)) {
+                next.delete(originalLineIndex);
+            } else {
+                next.add(originalLineIndex);
+            }
+            return next;
+        });
+        
+        pendingCursorRestoreRef.current = { startFull: curStartFull, endFull: curEndFull };
+    };
+
+    // Restore cursor position effect
+    useEffect(() => {
+        if (pendingCursorRestoreRef.current && textareaRef.current) {
+            const { startFull, endFull } = pendingCursorRestoreRef.current;
+            pendingCursorRestoreRef.current = null;
+            
+            const nextStartVis = fullToVisibleMap[startFull] ?? visibleText.length;
+            const nextEndVis = fullToVisibleMap[endFull] ?? visibleText.length;
+            
+            textareaRef.current.focus();
+            textareaRef.current.setSelectionRange(nextStartVis, nextEndVis);
+        }
+    }, [visibleText, fullToVisibleMap]);
+
+    // Parse and tokenize highlights in the editor
+    const syntaxRanges = useMemo(() => {
+        const list = [];
+
+        // 1. Headings
+        if (editorColorizeHeadings) {
+            const lines = visibleText.split('\n');
+            let charOffset = 0;
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const lvl = getHeadingLevel(line);
+                if (lvl === 1) {
+                    list.push({ start: charOffset, end: charOffset + line.length, type: 'h1' });
+                } else if (lvl === 2) {
+                    list.push({ start: charOffset, end: charOffset + line.length, type: 'h2' });
+                }
+                charOffset += line.length + 1; // +1 for newline
+            }
+        }
+
+        const addRange = (start, end, type) => {
+            const hasOverlap = list.some(r => (start < r.end && end > r.start));
+            if (!hasOverlap) {
+                list.push({ start, end, type });
+            }
+        };
+
+        // 2. Figures
+        if (editorColorizeFigures) {
+            const figRegex = /!\[[^\]]*\]\([^)]+\)(?:\{[^}]*\})?/g;
+            let match;
+            while ((match = figRegex.exec(visibleText)) !== null) {
+                addRange(match.index, match.index + match[0].length, 'figure');
+            }
+        }
+
+        // 3. Equations
+        if (editorColorizeEquations) {
+            const eqBlockRegex = /\$\$[\s\S]*?\$\$/g;
+            let match;
+            while ((match = eqBlockRegex.exec(visibleText)) !== null) {
+                addRange(match.index, match.index + match[0].length, 'equation');
+            }
+            
+            const eqInlineRegex = /\$[^$\n]+?\$/g;
+            while ((match = eqInlineRegex.exec(visibleText)) !== null) {
+                addRange(match.index, match.index + match[0].length, 'equation');
+            }
+        }
+
+        // 4. Cross references
+        if (editorColorizeCrossRefs) {
+            const refRegex = /\[[^\]]*@[^\]]+\]/g;
+            let match;
+            while ((match = refRegex.exec(visibleText)) !== null) {
+                addRange(match.index, match.index + match[0].length, 'cross-ref');
+            }
+        }
+
+        list.sort((a, b) => a.start - b.start);
+        return list;
+    }, [visibleText, editorColorizeHeadings, editorColorizeCrossRefs, editorColorizeFigures, editorColorizeEquations]);
+
     // Fallback default tags if not configured
     const DEFAULT_COMMENT_TAGS = {
       major: [
@@ -36,7 +301,7 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
     const cursorRef = useRef({ start: 0, end: 0 });
 
     const [suggestion, setSuggestion] = useState('');
-    const [isSuggesting, setIsSuggesting] = useState(false);
+    const [, setIsSuggesting] = useState(false);
     const [cursorVersion, setCursorVersion] = useState(0);
     const [caretPos, setCaretPos] = useState({ top: 0, left: 0 });
     const [showCiteMenu, setShowCiteMenu] = useState(false);
@@ -297,34 +562,91 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
         return ranges;
     }, [comments, value]);
 
+    // Compute collapsed index ranges in full text
+    const collapsedRanges = useMemo(() => {
+        const ranges = [];
+        const lines = value.split('\n');
+        let fullIdx = 0;
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const lvl = getHeadingLevel(line);
+            if (lvl > 0 && collapsedHeadingLines.has(i)) {
+                const start = fullIdx + line.length;
+                let j = i + 1;
+                while (j < lines.length) {
+                    const nextLvl = getHeadingLevel(lines[j]);
+                    if (nextLvl > 0 && nextLvl <= lvl) {
+                        break;
+                    }
+                    j++;
+                }
+                let end = fullIdx + line.length;
+                for (let lIndex = i + 1; lIndex < j; lIndex++) {
+                    end += 1 + lines[lIndex].length;
+                }
+                ranges.push({ start, end });
+                i = j - 1;
+                fullIdx = end;
+            } else {
+                fullIdx += line.length + 1;
+            }
+        }
+        return ranges;
+    }, [value, collapsedHeadingLines]);
+
+    const isIndexCollapsed = useCallback((idx) => {
+        return collapsedRanges.some(r => idx >= r.start && idx < r.end);
+    }, [collapsedRanges]);
+
+    // Mapped comment ranges in visibleText
+    const visibleCommentRanges = useMemo(() => {
+        const list = [];
+        for (const r of commentRanges) {
+            if (isIndexCollapsed(r.start)) continue;
+            const visStart = fullToVisibleMap[r.start];
+            const visEnd = fullToVisibleMap[r.end];
+            if (visStart !== -1 && visEnd !== -1 && visStart !== visEnd) {
+                list.push({ start: visStart, end: visEnd, id: r.id, comment: r.comment });
+            }
+        }
+        list.sort((a, b) => a.start - b.start);
+        return list;
+    }, [commentRanges, fullToVisibleMap, isIndexCollapsed]);
+
     // --- Build ghost overlay content: full text with highlight spans + suggestion ---
     const renderGhostContent = () => {
         const cursorPos = cursorRef.current?.start || 0;
 
-        if (commentRanges.length === 0 && !suggestion) {
-            // Nothing to render in overlay
-            return null;
+        // Collect all boundary indices
+        const boundariesSet = new Set([0, visibleText.length, cursorPos]);
+        for (const r of visibleCommentRanges) {
+            boundariesSet.add(r.start);
+            boundariesSet.add(r.end);
+        }
+        for (const r of syntaxRanges) {
+            boundariesSet.add(r.start);
+            boundariesSet.add(r.end);
         }
 
-        // Merge comment ranges with suggestion insertion point
-        // We need to render the FULL text so alignment is correct
+        const boundaries = Array.from(boundariesSet).sort((a, b) => a - b);
         let segments = [];
-        let lastIndex = 0;
 
-        // Build highlight segments
-        for (const r of commentRanges) {
-            const rStart = Math.max(r.start, lastIndex);
-            if (rStart > lastIndex) {
-                segments.push({ text: value.substring(lastIndex, rStart), type: 'normal' });
-            }
-            const rEnd = Math.min(r.end, value.length);
-            if (rEnd > rStart) {
-                segments.push({ text: value.substring(rStart, rEnd), type: 'highlight', id: r.id });
-                lastIndex = rEnd;
-            }
-        }
-        if (lastIndex < value.length) {
-            segments.push({ text: value.substring(lastIndex), type: 'normal' });
+        for (let idx = 0; idx < boundaries.length - 1; idx++) {
+            const start = boundaries[idx];
+            const end = boundaries[idx + 1];
+            if (start === end) continue;
+
+            const text = visibleText.substring(start, end);
+            const comment = visibleCommentRanges.find(r => start >= r.start && end <= r.end);
+            const syntax = syntaxRanges.find(r => start >= r.start && end <= r.end);
+
+            segments.push({
+                text,
+                type: 'normal',
+                commentId: comment ? comment.id : null,
+                commentColor: comment ? (comment.comment?.tag?.color || '#ffb400') : null,
+                syntaxType: syntax ? syntax.type : null
+            });
         }
 
         // Now inject suggestion at cursor position
@@ -357,15 +679,29 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
         }
 
         return segments.map((s, i) => {
-            if (s.type === 'highlight') {
-                const range = commentRanges.find(r => r.id === s.id);
-                const tagColor = range?.comment?.tag?.color || '#ffb400';
-                return <span key={i} style={{ backgroundColor: `${tagColor}33`, borderBottom: `2px solid ${tagColor}` }}>{s.text}</span>;
-            }
             if (s.type === 'suggestion') {
                 return <span key={i} className="suggestion">{s.text}</span>;
             }
-            return <span key={i}>{s.text}</span>;
+
+            let style = {};
+            if (s.syntaxType === 'h1' || s.syntaxType === 'h2') {
+                style.color = resolvedHeadingColor;
+                style.fontWeight = 'bold';
+            } else if (s.syntaxType === 'cross-ref') {
+                style.color = resolvedCrossRefColor;
+                style.fontWeight = '500';
+            } else if (s.syntaxType === 'figure') {
+                style.color = resolvedFigureColor;
+            } else if (s.syntaxType === 'equation') {
+                style.color = resolvedEquationColor;
+            }
+
+            if (s.commentId) {
+                style.backgroundColor = `${s.commentColor}33`;
+                style.borderBottom = `2px solid ${s.commentColor}`;
+            }
+
+            return <span key={i} style={style}>{s.text}</span>;
         });
     };
 
@@ -373,7 +709,7 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
     const computeCommentPositions = useCallback(() => {
         const textarea = textareaRef.current;
         const mirror = positionMirrorRef.current;
-        if (!textarea || !mirror || commentRanges.length === 0) {
+        if (!textarea || !mirror || visibleCommentRanges.length === 0) {
             if (onCommentPositionsChange) onCommentPositionsChange([]);
             return;
         }
@@ -399,8 +735,8 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
         mirror.style.overflow = 'hidden';
 
         const positions = [];
-        for (const r of commentRanges) {
-            mirror.textContent = value.substring(0, r.start);
+        for (const r of visibleCommentRanges) {
+            mirror.textContent = visibleText.substring(0, r.start);
             const marker = document.createElement('span');
             marker.textContent = '\u200b';
             mirror.appendChild(marker);
@@ -409,7 +745,63 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
         }
 
         if (onCommentPositionsChange) onCommentPositionsChange(positions);
-    }, [commentRanges, value, onCommentPositionsChange]);
+    }, [visibleCommentRanges, visibleText, onCommentPositionsChange]);
+
+    const computeHeadingPositions = useCallback(() => {
+        const textarea = textareaRef.current;
+        const mirror = positionMirrorRef.current;
+        if (!textarea || !mirror) return;
+
+        const lines = visibleText.split('\n');
+        const positions = [];
+        let charCount = 0;
+
+        const computed = window.getComputedStyle(textarea);
+        const properties = [
+            'fontFamily', 'fontSize', 'fontWeight', 'fontStyle',
+            'lineHeight', 'padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+            'whiteSpace', 'wordWrap', 'overflowWrap', 'wordBreak',
+            'letterSpacing', 'wordSpacing', 'tabSize', 'MozTabSize',
+            'textTransform', 'textIndent'
+        ];
+        properties.forEach(prop => { mirror.style[prop] = computed[prop]; });
+        mirror.style.position = 'absolute';
+        mirror.style.top = '0';
+        mirror.style.left = '0';
+        mirror.style.visibility = 'hidden';
+        mirror.style.width = `${textarea.clientWidth}px`;
+        mirror.style.border = 'none';
+        mirror.style.boxSizing = 'border-box';
+        mirror.style.whiteSpace = 'pre-wrap';
+        mirror.style.wordWrap = 'break-word';
+        mirror.style.overflow = 'hidden';
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const lvl = getHeadingLevel(line);
+            if (lvl > 0) {
+                mirror.textContent = visibleText.substring(0, charCount);
+                const marker = document.createElement('span');
+                marker.textContent = '\u200b';
+                mirror.appendChild(marker);
+                const yTop = marker.offsetTop;
+                
+                const originalLineIndex = visibleToFullMap.length > charCount
+                    ? value.substring(0, visibleToFullMap[charCount]).split('\n').length - 1
+                    : i;
+
+                positions.push({
+                    lineIndex: i,
+                    originalLineIndex,
+                    level: lvl,
+                    y: yTop,
+                    isCollapsed: line.endsWith(' ⋯')
+                });
+            }
+            charCount += line.length + 1;
+        }
+        setHeadingPositions(positions);
+    }, [visibleText, value, visibleToFullMap]);
 
     useEffect(() => {
         if (!comments || comments.length === 0) {
@@ -422,14 +814,28 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
         }, 400);
 
         return () => clearTimeout(handler);
-    }, [computeCommentPositions, value, comments, onCommentPositionsChange]);
+    }, [computeCommentPositions, visibleText, comments, onCommentPositionsChange]);
+
+    useEffect(() => {
+        if (!editorEnableFolding) {
+            setHeadingPositions([]);
+            return;
+        }
+        const handler = setTimeout(() => {
+            computeHeadingPositions();
+        }, 100);
+        return () => clearTimeout(handler);
+    }, [computeHeadingPositions, visibleText, editorEnableFolding]);
 
     // Recompute on resize        
     useEffect(() => {
-        const handleResize = () => computeCommentPositions();
+        const handleResize = () => {
+            computeCommentPositions();
+            computeHeadingPositions();
+        };
         window.addEventListener('resize', handleResize);
         return () => window.removeEventListener('resize', handleResize);
-    }, [computeCommentPositions]);
+    }, [computeCommentPositions, computeHeadingPositions]);
 
     const acceptSuggestion = useCallback(() => {
         if (!suggestion) return;
@@ -608,7 +1014,21 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
             if (abortRef.current) abortRef.current.abort();
             if (onAiThinking) onAiThinking(false);
         };
-    }, [onAiThinking]);
+    }, [onAiThinking]);    const isColorizedActive = editorColorizeHeadings || editorColorizeCrossRefs || editorColorizeFigures || editorColorizeEquations;
+    const activePaddingLeft = (editorEnableFolding && headingPositions.length > 0) ? '45px' : '32px';
+
+    const handleScroll = (e) => {
+        updateCaretPosition();
+        const scrollTop = e.target.scrollTop;
+        if (ghostRef.current) {
+            ghostRef.current.scrollTop = scrollTop;
+            ghostRef.current.scrollLeft = e.target.scrollLeft;
+        }
+        if (gutterRef.current) {
+            gutterRef.current.scrollTop = scrollTop;
+        }
+        if (onEditorScrollChange) onEditorScrollChange(scrollTop);
+    };
 
 
     return (
@@ -774,14 +1194,57 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
             {/* Text Area */}
             <div className="textarea-wrapper">
                 {/* Mirror for caret position logic */}
-                <div ref={mirrorRef} className="textarea-mirror" aria-hidden="true" />
+                <div ref={mirrorRef} className="textarea-mirror" style={{ paddingLeft: activePaddingLeft }} aria-hidden="true" />
                 {/* Hidden mirror for computing comment Y positions */}
-                <div ref={positionMirrorRef} className="textarea-mirror" aria-hidden="true" />
+                <div ref={positionMirrorRef} className="textarea-mirror" style={{ paddingLeft: activePaddingLeft }} aria-hidden="true" />
 
                 {/* Ghost Overlay for highlights + AI suggestions */}
-                <div ref={ghostRef} className="ghost-overlay" aria-hidden="true">
+                <div ref={ghostRef} className="ghost-overlay" style={{ color: isColorizedActive ? 'var(--text-primary)' : 'transparent', paddingLeft: activePaddingLeft }} aria-hidden="true">
                     {renderGhostContent()}
                 </div>
+
+                {/* Folding Gutter */}
+                {editorEnableFolding && headingPositions.length > 0 && (
+                    <div ref={gutterRef} className="folding-gutter" style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        bottom: 0,
+                        width: '40px',
+                        overflow: 'hidden',
+                        pointerEvents: 'none',
+                        zIndex: 10
+                    }} aria-hidden="true">
+                        {headingPositions.map(pos => (
+                            <button
+                                key={pos.lineIndex}
+                                onClick={() => toggleSectionCollapse(pos.originalLineIndex)}
+                                style={{
+                                    position: 'absolute',
+                                    top: `${pos.y}px`,
+                                    left: '12px',
+                                    width: '18px',
+                                    height: '18px',
+                                    background: 'var(--bg-panel)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: '4px',
+                                    color: 'var(--text-secondary)',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    pointerEvents: 'auto',
+                                    padding: 0,
+                                    boxShadow: 'var(--shadow-sm)'
+                                }}
+                                className="folding-chevron-btn"
+                                title={pos.isCollapsed ? "Expand section" : "Collapse section"}
+                            >
+                                {pos.isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                            </button>
+                        ))}
+                    </div>
+                )}
 
                 {/* Improve/Comment Button Widget */}
                 {showWidget && (
@@ -846,13 +1309,15 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
                                             if (newCommentText.trim()) {
                                                 const start = selectionRange?.start || 0;
                                                 const end = selectionRange?.end || 0;
-                                                const startLine = value.substring(0, start).split('\n').length;
+                                                const startFull = visibleToFullMap[start] || 0;
+                                                const endFull = visibleToFullMap[end] || 0;
+                                                const startLine = value.substring(0, startFull).split('\n').length;
                                                 // Capture context
-                                                const contextBefore = value.substring(Math.max(0, start - 20), start);
-                                                const contextAfter = value.substring(end, Math.min(value.length, end + 20));
+                                                const contextBefore = value.substring(Math.max(0, startFull - 20), startFull);
+                                                const contextAfter = value.substring(endFull, Math.min(value.length, endFull + 20));
 
                                                 if (onAddComment) {
-                                                    onAddComment(newCommentText, { text: selectedText, start, end, contextBefore, contextAfter, line: startLine, tag: activeSelectedTag });
+                                                    onAddComment(newCommentText, { text: selectedText, start: startFull, end: endFull, contextBefore, contextAfter, line: startLine, tag: activeSelectedTag });
                                                 }
                                                 setNewCommentText('');
                                                 setSelectedTagId('');
@@ -904,12 +1369,14 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
                                         if (newCommentText.trim()) {
                                             const start = selectionRange?.start || 0;
                                             const end = selectionRange?.end || 0;
-                                            const startLine = value.substring(0, start).split('\n').length;
-                                            const contextBefore = value.substring(Math.max(0, start - 20), start);
-                                            const contextAfter = value.substring(end, Math.min(value.length, end + 20));
+                                            const startFull = visibleToFullMap[start] || 0;
+                                            const endFull = visibleToFullMap[end] || 0;
+                                            const startLine = value.substring(0, startFull).split('\n').length;
+                                            const contextBefore = value.substring(Math.max(0, startFull - 20), startFull);
+                                            const contextAfter = value.substring(endFull, Math.min(value.length, endFull + 20));
 
                                             if (onAddComment) {
-                                                onAddComment(newCommentText, { text: selectedText, start, end, contextBefore, contextAfter, line: startLine, tag: activeSelectedTag });
+                                                onAddComment(newCommentText, { text: selectedText, start: startFull, end: endFull, contextBefore, contextAfter, line: startLine, tag: activeSelectedTag });
                                             }
                                             setNewCommentText('');
                                             setSelectedTagId('');
@@ -960,10 +1427,12 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
 
                 <textarea
                     ref={textareaRef}
-                    value={value}
-                    onChange={(e) => {
-                        setSuggestion(''); // Clear on type
-                        onChange(e.target.value);
+                    value={visibleText}
+                    onChange={handleTextareaChange}
+                    style={{
+                        color: isColorizedActive ? 'transparent' : 'var(--text-primary)',
+                        caretColor: 'var(--text-primary)',
+                        paddingLeft: activePaddingLeft
                     }}
                     className="main-textarea"
                     placeholder="# Start writing..."
@@ -1008,15 +1477,7 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
                     onKeyUp={updateCursor}
                     onClick={updateCursor}
                     onSelect={updateCursor}
-                    onScroll={(e) => {
-                        updateCaretPosition();
-                        const scrollTop = e.target.scrollTop;
-                        if (ghostRef.current) {
-                            ghostRef.current.scrollTop = scrollTop;
-                            ghostRef.current.scrollLeft = e.target.scrollLeft;
-                        }
-                        if (onEditorScrollChange) onEditorScrollChange(scrollTop);
-                    }}
+                    onScroll={handleScroll}
                     onDragOver={(e) => {
                         e.preventDefault();
                         e.stopPropagation();

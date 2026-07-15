@@ -34,7 +34,7 @@
     /* Matches typical H1 */
     font-weight: 700;
     line-height: 1.2;
-    color: var(--text-primary);
+    color: var(--accent-color);
     flex: 1;
 }
 

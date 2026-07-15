@@ -53,6 +53,58 @@ export function SettingsModal({ onClose, metadata, onUpdate, mode, settings, onU
         setLocalSettings(settings || {});
     }, [settings]);
 
+    const renderColorOption = (label, isColorizeKey, colorKey, defaultColor) => {
+        const isColorize = localMeta[isColorizeKey] ?? true;
+        const currentColor = localMeta[colorKey] || defaultColor;
+        
+        return (
+            <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 14, marginTop: 14 }}>
+                <div className="setting-row">
+                    <div className="setting-info">
+                        <span className="setting-name">{label}</span>
+                    </div>
+                    <label className="switch">
+                        <input
+                            type="checkbox"
+                            checked={isColorize}
+                            onChange={(e) => handleChange(isColorizeKey, e.target.checked)}
+                        />
+                        <span className="slider round"></span>
+                    </label>
+                </div>
+                
+                {isColorize && (
+                    <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Color:</span>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                            {PRESET_COLORS.map(color => (
+                                <span
+                                    key={color}
+                                    onClick={() => handleChange(colorKey, color)}
+                                    style={{
+                                        width: 18, height: 18, borderRadius: '50%', background: color,
+                                        cursor: 'pointer', border: currentColor === color ? '2px solid var(--text-primary)' : '1px solid transparent',
+                                        boxShadow: '0 0 4px rgba(0,0,0,0.1)', display: 'inline-block'
+                                    }}
+                                />
+                            ))}
+                            <input
+                                type="color"
+                                value={currentColor}
+                                onChange={(e) => handleChange(colorKey, e.target.value)}
+                                style={{
+                                    width: 22, height: 22, border: '1px solid var(--border-color)', borderRadius: '4px',
+                                    background: 'transparent', cursor: 'pointer', padding: 0
+                                }}
+                                title="Custom Color"
+                            />
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
     const handleChange = (key, value) => {
         const updated = { ...localMeta, [key]: value };
         setLocalMeta(updated);
@@ -437,6 +489,92 @@ export function SettingsModal({ onClose, metadata, onUpdate, mode, settings, onU
                                             style={{ width: '100px' }}
                                         />
                                     </div>
+                                </div>
+
+                                <div className="settings-card">
+                                    <h4 className="settings-card-title">Editor Highlights & Folding</h4>
+                                    
+                                    <div className="setting-row">
+                                        <div className="setting-info">
+                                            <span className="setting-name">Heading Highlights</span>
+                                            <span className="setting-desc">Colorize `#` and `##` titles in the editor</span>
+                                        </div>
+                                        <label className="switch">
+                                            <input
+                                                type="checkbox"
+                                                checked={localMeta.editorColorizeHeadings ?? true}
+                                                onChange={(e) => handleChange('editorColorizeHeadings', e.target.checked)}
+                                            />
+                                            <span className="slider round"></span>
+                                        </label>
+                                    </div>
+                                    
+                                    {(localMeta.editorColorizeHeadings ?? true) && (
+                                        <div style={{ paddingLeft: 12, borderLeft: '2px solid var(--accent-color)', marginTop: 10, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                            <div className="setting-row">
+                                                <div className="setting-info">
+                                                    <span className="setting-name" style={{ fontSize: '0.85rem' }}>Heading Color Source</span>
+                                                </div>
+                                                <div className="segmented-control" style={{ fontSize: '0.75rem' }}>
+                                                    <button
+                                                        className={(localMeta.editorHeadingColorSource || 'accent') === 'accent' ? 'active' : ''}
+                                                        onClick={() => handleChange('editorHeadingColorSource', 'accent')}
+                                                    > Project Accent </button>
+                                                    <button
+                                                        className={(localMeta.editorHeadingColorSource) === 'custom' ? 'active' : ''}
+                                                        onClick={() => handleChange('editorHeadingColorSource', 'custom')}
+                                                    > Custom Color </button>
+                                                </div>
+                                            </div>
+                                            
+                                            {(localMeta.editorHeadingColorSource === 'custom') && (
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                                                    <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Custom Color:</span>
+                                                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                                                        {PRESET_COLORS.map(color => (
+                                                            <span
+                                                                key={color}
+                                                                onClick={() => handleChange('editorHeadingColor', color)}
+                                                                style={{
+                                                                    width: 18, height: 18, borderRadius: '50%', background: color,
+                                                                    cursor: 'pointer', border: (localMeta.editorHeadingColor || '#0984e3') === color ? '2px solid var(--text-primary)' : '1px solid transparent',
+                                                                    boxShadow: '0 0 4px rgba(0,0,0,0.1)', display: 'inline-block'
+                                                                }}
+                                                            />
+                                                        ))}
+                                                        <input
+                                                            type="color"
+                                                            value={localMeta.editorHeadingColor || '#0984e3'}
+                                                            onChange={(e) => handleChange('editorHeadingColor', e.target.value)}
+                                                            style={{
+                                                                width: 22, height: 22, border: '1px solid var(--border-color)', borderRadius: '4px',
+                                                                background: 'transparent', cursor: 'pointer', padding: 0
+                                                            }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            <div className="setting-row">
+                                                <div className="setting-info">
+                                                    <span className="setting-name" style={{ fontSize: '0.85rem' }}>Section folding in Editor</span>
+                                                    <span className="setting-desc" style={{ fontSize: '0.75rem' }}>Enable collapsible sections in the editor</span>
+                                                </div>
+                                                <label className="switch">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={localMeta.editorEnableFolding ?? true}
+                                                        onChange={(e) => handleChange('editorEnableFolding', e.target.checked)}
+                                                    />
+                                                    <span className="slider round"></span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    )}
+                                    
+                                    {renderColorOption('Cross-Reference Highlights', 'editorColorizeCrossRefs', 'editorCrossRefColor', '#0066cc')}
+                                    {renderColorOption('Figure Highlights', 'editorColorizeFigures', 'editorFigureColor', '#7f8c8d')}
+                                    {renderColorOption('Equation Highlights', 'editorColorizeEquations', 'editorEquationColor', '#0b7285')}
                                 </div>
                             </div>
                         )}
