@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Cpu, Zap, AlignCenter, AlignJustify, Save, Activity, Settings, X, Check, FileText, Square, HelpCircle, Palette, AlignLeft } from 'lucide-react';
 
 
-export function StatusBar({
+function StatusBarComponent({
     settings,
     isAiThinking,
     projectMetadata,
@@ -462,3 +462,5 @@ const FONT_OPTIONS = [
         </>
     );
 }
+
+export const StatusBar = React.memo(StatusBarComponent);

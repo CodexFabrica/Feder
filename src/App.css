@@ -320,6 +320,11 @@
     /* Comfortable minimum */
 }
 
+.panel-preview.ctrl-active,
+.panel-preview.ctrl-active * {
+    cursor: pointer !important;
+}
+
 .preview-content {
     width: 100%;
     margin: 0 auto;
@@ -1707,4 +1712,50 @@ input[type=number].clean-number {
     color: var(--accent-color) !important;
     border-color: var(--accent-color) !important;
     transform: scale(1.08);
+}
+
+/* Align scrollbars and stable gutters for Editor and Ghost Overlay */
+.main-textarea,
+.ghost-overlay {
+    scrollbar-gutter: stable;
+}
+
+.ghost-overlay {
+    overflow-y: scroll !important;
+    overflow-x: hidden !important;
+}
+
+/* Custom scrollbar layout to guarantee identical width and alignment */
+.main-textarea::-webkit-scrollbar,
+.ghost-overlay::-webkit-scrollbar {
+    width: 10px;
+}
+
+.main-textarea::-webkit-scrollbar-track,
+.ghost-overlay::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.main-textarea::-webkit-scrollbar-thumb {
+    background: var(--border-color, rgba(255, 255, 255, 0.15));
+    border-radius: 5px;
+}
+
+.main-textarea::-webkit-scrollbar-thumb:hover {
+    background: var(--text-secondary, rgba(255, 255, 255, 0.3));
+}
+
+.ghost-overlay::-webkit-scrollbar-thumb {
+    background: transparent !important;
+}
+
+/* For Firefox scrollbar alignment */
+.main-textarea {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-color, rgba(255, 255, 255, 0.15)) transparent;
+}
+
+.ghost-overlay {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
 }

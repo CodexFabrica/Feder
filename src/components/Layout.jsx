@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Moon, Sun, Save, FolderOpen, FilePlus, Download, Sidebar, Feather, Settings, SunMoon, FileJson, ChevronDown } from 'lucide-react';
 
-export function Layout({
+function LayoutComponent({
     children,
     onOpen,
     onSave,
@@ -204,6 +204,8 @@ export function Layout({
         </div>
     );
 }
+
+export const Layout = React.memo(LayoutComponent);
 
 function ActionButton({ onClick, icon, label }) {
     return (

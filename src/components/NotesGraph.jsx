@@ -23,6 +23,8 @@ export function NotesGraph({ notesList, onFileSelect, currentFilename }) {
     const draggedNodeRef = useRef(null);
     const lastMousePosRef = useRef({ x: 0, y: 0 });
     const animationFrameRef = useRef(null);
+    const startSimulationRef = useRef(null);
+    const drawCallbackRef = useRef(null);
 
     // Double-click detection helper
     const lastClickRef = useRef({ time: 0, nodeId: null });
@@ -165,6 +167,7 @@ export function NotesGraph({ notesList, onFileSelect, currentFilename }) {
             y: height / 2 - centerY * newScale,
             scale: newScale
         };
+        drawCallbackRef.current?.();
     };
 
     // Trigger centering on first load
@@ -272,14 +275,18 @@ export function NotesGraph({ notesList, onFileSelect, currentFilename }) {
                 n.vy += (cy - n.y) * centerCoeff;
             });
 
-            // 4. Update Positions with damping
+            // 4. Update Positions with damping and measure total kinetic movement
+            let totalMovement = 0;
             nodesArr.forEach(n => {
                 if (n === draggedNodeRef.current) return;
                 n.x += n.vx;
                 n.y += n.vy;
                 n.vx *= damping;
                 n.vy *= damping;
+                totalMovement += Math.abs(n.vx) + Math.abs(n.vy);
             });
+
+            return totalMovement;
         };
 
         const drawCanvas = () => {
@@ -448,17 +455,40 @@ export function NotesGraph({ notesList, onFileSelect, currentFilename }) {
             ctx.restore();
         };
 
+        drawCallbackRef.current = drawCanvas;
+
+        let isRunning = true;
         const tick = () => {
-            runPhysics();
+            if (!isRunning) return;
+            const movement = runPhysics();
             drawCanvas();
+
+            // When nodes settle and nothing is dragged, stop animation loop to conserve CPU/RAM
+            if (movement < 0.05 && !draggedNodeRef.current) {
+                simulationNodesRef.current.forEach(n => { n.vx = 0; n.vy = 0; });
+                drawCanvas();
+                animationFrameRef.current = null;
+                return;
+            }
+
             animationFrameRef.current = requestAnimationFrame(tick);
         };
 
-        // Start Physics Engine
-        animationFrameRef.current = requestAnimationFrame(tick);
+        const startSimulation = () => {
+            if (!animationFrameRef.current) {
+                animationFrameRef.current = requestAnimationFrame(tick);
+            }
+        };
+
+        startSimulationRef.current = startSimulation;
+        startSimulation();
 
         return () => {
-            cancelAnimationFrame(animationFrameRef.current);
+            isRunning = false;
+            if (animationFrameRef.current) {
+                cancelAnimationFrame(animationFrameRef.current);
+                animationFrameRef.current = null;
+            }
         };
     }, [groupBy, searchQuery, hoveredNode, activeLegendItem, currentFilename]);
 
@@ -547,6 +577,7 @@ export function NotesGraph({ notesList, onFileSelect, currentFilename }) {
                 x: e.clientX - startPanRef.current.x,
                 y: e.clientY - startPanRef.current.y
             };
+            drawCallbackRef.current?.();
             return;
         }
 
@@ -559,6 +590,7 @@ export function NotesGraph({ notesList, onFileSelect, currentFilename }) {
             n.fy = pos.y;
             n.vx = 0;
             n.vy = 0;
+            startSimulationRef.current?.();
             return;
         }
 
@@ -581,6 +613,7 @@ export function NotesGraph({ notesList, onFileSelect, currentFilename }) {
             draggedNodeRef.current.fx = null;
             draggedNodeRef.current.fy = null;
             draggedNodeRef.current = null;
+            startSimulationRef.current?.();
         }
     };
 
@@ -606,6 +639,7 @@ export function NotesGraph({ notesList, onFileSelect, currentFilename }) {
             y: transY,
             scale: newScale
         };
+        drawCallbackRef.current?.();
     };
 
     // Legends Map

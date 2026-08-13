@@ -611,11 +611,8 @@ input:checked+.slider:before {
   height: 100%;
   border: none;
   resize: none;
-  padding: 20px;
   background: transparent;
   color: var(--text-primary);
-  font-family: var(--font-mono);
-  line-height: 1.6;
   outline: none;
 }
 

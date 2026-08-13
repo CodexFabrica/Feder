@@ -2,14 +2,157 @@ import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { Bold, Italic, Underline, Heading1, Heading2, Image, Link, List, Quote, Code, ImagePlus, Sparkles, MessageSquare, BookMarked, Sigma, Table, ChevronDown, ChevronRight, BookOpen, X } from 'lucide-react';
 import { requestInlineSuggestion } from '../utils/aiSuggestions';
 
-export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, settings, projectMetadata, onAiThinking, onRegisterCancel, onRequestImprovement, onSelectionChange, comments, commentTags, onAddComment, onCommentPositionsChange, onEditorScrollChange }) {
+/**
+ * Finds the best character index in full markdown text (value) corresponding to a clicked word in preview.
+ * Returns the character index right at the END of the specific word in raw markdown text.
+ */
+export function findWordEndPositionInMarkdown(value, wordInfo) {
+    if (!value || !wordInfo || !wordInfo.word) return -1;
+
+    const { word, prefix = '', suffix = '', sectionOffset = null, tagName = '' } = wordInfo;
+    const cleanWord = word.trim();
+    if (!cleanWord) return -1;
+
+    const lines = value.split('\n');
+    let sectionStartChar = 0;
+    if (sectionOffset !== null && sectionOffset >= 0) {
+        for (let i = 0; i < Math.min(sectionOffset, lines.length); i++) {
+            sectionStartChar += lines[i].length + 1;
+        }
+    }
+
+    const cleanForTokens = (str) => {
+        return (str || '')
+            .replace(/[\\`*_{}\[\]()#+\-.!$>|~]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+    };
+
+    const prefixTokens = cleanForTokens(prefix).split(' ').filter(Boolean).slice(-8);
+    const suffixTokens = cleanForTokens(suffix).split(' ').filter(Boolean).slice(0, 8);
+
+    const candidates = [];
+    const lowerValue = value.toLowerCase();
+    const lowerWord = cleanWord.toLowerCase();
+
+    // 1. Exact case-sensitive matches
+    let pos = 0;
+    while ((pos = value.indexOf(cleanWord, pos)) !== -1) {
+        candidates.push({ start: pos, end: pos + cleanWord.length, exactCase: true });
+        pos += cleanWord.length;
+    }
+
+    // 2. Case-insensitive matches if no exact match found
+    if (candidates.length === 0) {
+        let lpos = 0;
+        while ((lpos = lowerValue.indexOf(lowerWord, lpos)) !== -1) {
+            candidates.push({ start: lpos, end: lpos + cleanWord.length, exactCase: false });
+            lpos += cleanWord.length;
+        }
+    }
+
+    if (candidates.length === 0) {
+        return -1;
+    }
+
+    if (candidates.length === 1) {
+        return candidates[0].end;
+    }
+
+    let bestScore = -Infinity;
+    let bestCandidate = candidates[0];
+
+    const isWordChar = (ch) => {
+        if (!ch) return false;
+        return /[^\s\.,;:!?\(\)\[\]\{\}"'`~<>\/\\=+\-*&^%$#@!|«»“”‘’¿¡]/.test(ch);
+    };
+
+    for (const cand of candidates) {
+        let score = 0;
+
+        if (cand.exactCase) score += 20;
+
+        const charBefore = cand.start > 0 ? value[cand.start - 1] : ' ';
+        const charAfter = cand.end < value.length ? value[cand.end] : ' ';
+
+        if (!isWordChar(charBefore)) score += 30;
+        if (!isWordChar(charAfter)) score += 30;
+
+        // Context before
+        const rawBefore = value.substring(Math.max(0, cand.start - 150), cand.start);
+        const cleanBeforeTokens = cleanForTokens(rawBefore).split(' ').filter(Boolean);
+
+        for (let i = 0; i < prefixTokens.length; i++) {
+            const token = prefixTokens[i];
+            if (cleanBeforeTokens.includes(token)) {
+                score += 25;
+                const tokenIdx = cleanBeforeTokens.lastIndexOf(token);
+                if (tokenIdx >= cleanBeforeTokens.length - (prefixTokens.length - i + 2)) {
+                    score += 20;
+                }
+            }
+        }
+
+        // Context after
+        const rawAfter = value.substring(cand.end, Math.min(value.length, cand.end + 150));
+        const cleanAfterTokens = cleanForTokens(rawAfter).split(' ').filter(Boolean);
+
+        for (let i = 0; i < suffixTokens.length; i++) {
+            const token = suffixTokens[i];
+            if (cleanAfterTokens.includes(token)) {
+                score += 25;
+                const tokenIdx = cleanAfterTokens.indexOf(token);
+                if (tokenIdx !== -1 && tokenIdx <= i + 2) {
+                    score += 20;
+                }
+            }
+        }
+
+        // Section proximity
+        if (sectionOffset !== null) {
+            if (cand.start >= sectionStartChar) {
+                const dist = cand.start - sectionStartChar;
+                score += Math.max(0, 100 - (dist / 20));
+            } else {
+                const dist = sectionStartChar - cand.start;
+                score -= Math.min(50, dist / 20);
+            }
+        }
+
+        // Tag matching
+        if (/^h[1-6]$/i.test(tagName)) {
+            const lineStart = value.lastIndexOf('\n', cand.start) + 1;
+            const lineText = value.substring(lineStart, cand.start);
+            if (/^\s*#{1,6}\s+/.test(lineText)) {
+                score += 80;
+            }
+        } else if (/^li$/i.test(tagName)) {
+            const lineStart = value.lastIndexOf('\n', cand.start) + 1;
+            const lineText = value.substring(lineStart, cand.start);
+            if (/^\s*([-*+]|\d+\.)\s+/.test(lineText)) {
+                score += 50;
+            }
+        }
+
+        if (score > bestScore) {
+            bestScore = score;
+            bestCandidate = cand;
+        }
+    }
+
+    return bestCandidate ? bestCandidate.end : -1;
+}
+
+function EditorComponent({ value, onChange, mode, onUploadImage, onPasteImage, settings, projectMetadata, onAiThinking, onRegisterCancel, onRequestImprovement, onSelectionChange, comments, commentTags, onAddComment, onCommentPositionsChange, onEditorScrollChange, onRegisterJumpTo }) {
     const textareaRef = useRef(null);
     const mirrorRef = useRef(null);
     const ghostRef = useRef(null);
     const positionMirrorRef = useRef(null);
     
-    const gutterRef = useRef(null);
+
     const pendingCursorRestoreRef = useRef(null);
+    const pendingScrollRestoreRef = useRef(null);
 
     // Settings for highlighting & folding
     const editorColorizeHeadings = projectMetadata?.editorColorizeHeadings ?? true;
@@ -22,6 +165,7 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
     const editorColorizeEquations = projectMetadata?.editorColorizeEquations ?? true;
     const editorEquationColor = projectMetadata?.editorEquationColor;
     const editorEnableFolding = projectMetadata?.editorEnableFolding ?? true;
+    const isColorizedActive = Boolean(editorColorizeHeadings || editorColorizeCrossRefs || editorColorizeFigures || editorColorizeEquations);
 
     const activeTheme = projectMetadata?.theme || 'light';
 
@@ -69,10 +213,13 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
 
     // Folding states
     const [collapsedHeadingLines, setCollapsedHeadingLines] = useState(new Set());
-    const [headingPositions, setHeadingPositions] = useState([]);
 
-    // Compute maps between full and visible text
+
+    // Compute maps between full and visible text (Fast-path: no allocations when no headings are collapsed)
     const { visibleText, visibleToFullMap, fullToVisibleMap } = useMemo(() => {
+        if (!collapsedHeadingLines || collapsedHeadingLines.size === 0) {
+            return { visibleText: value, visibleToFullMap: null, fullToVisibleMap: null };
+        }
         const lines = value.split('\n');
         let visibleStr = '';
         const v2f = [];
@@ -145,6 +292,16 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
         return { visibleText: visibleStr, visibleToFullMap: v2f, fullToVisibleMap: f2v };
     }, [value, collapsedHeadingLines]);
 
+    const getFullIdx = useCallback((visIdx) => {
+        if (!visibleToFullMap) return visIdx;
+        return visibleToFullMap[Math.min(visIdx, visibleToFullMap.length - 1)] ?? visIdx;
+    }, [visibleToFullMap]);
+
+    const getVisIdx = useCallback((fullIdx) => {
+        if (!fullToVisibleMap) return fullIdx;
+        return fullToVisibleMap[Math.min(fullIdx, fullToVisibleMap.length - 1)] ?? fullIdx;
+    }, [fullToVisibleMap]);
+
     // Find single edit helper
     function findSingleEdit(oldStr, newStr) {
         let start = 0;
@@ -165,10 +322,15 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
     }
 
     const handleTextareaChange = (e) => {
+        setSuggestion(''); // Clear on type
         const newVisibleText = e.target.value;
+        if (!visibleToFullMap) {
+            onChange(newVisibleText);
+            return;
+        }
         const edit = findSingleEdit(visibleText, newVisibleText);
-        const startFull = visibleToFullMap[edit.start] || 0;
-        const endFull = visibleToFullMap[edit.start + edit.deletedLength] || 0;
+        const startFull = visibleToFullMap[edit.start] ?? 0;
+        const endFull = visibleToFullMap[Math.min(edit.start + edit.deletedLength, visibleToFullMap.length - 1)] ?? value.length;
         const newFullText = value.substring(0, startFull) + edit.insertedText + value.substring(endFull);
         onChange(newFullText);
     };
@@ -178,10 +340,14 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
         const textarea = textareaRef.current;
         if (!textarea) return;
         
+        // Save scroll position so we can restore it after the re-render
+        const savedScrollTop = textarea.scrollTop;
+        
+        // Save cursor in full-text coordinates
         const curStartVis = textarea.selectionStart;
         const curEndVis = textarea.selectionEnd;
-        const curStartFull = visibleToFullMap[curStartVis] || 0;
-        const curEndFull = visibleToFullMap[curEndVis] || 0;
+        const curStartFull = getFullIdx(curStartVis);
+        const curEndFull = getFullIdx(curEndVis);
         
         setCollapsedHeadingLines(prev => {
             const next = new Set(prev);
@@ -194,24 +360,96 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
         });
         
         pendingCursorRestoreRef.current = { startFull: curStartFull, endFull: curEndFull };
+        pendingScrollRestoreRef.current = savedScrollTop;
     };
 
-    // Restore cursor position effect
+    const scrollToVisiblePosition = useCallback((visPos) => {
+        const textarea = textareaRef.current;
+        const mirror = mirrorRef.current;
+        if (!textarea || !mirror) return;
+
+        const computed = window.getComputedStyle(textarea);
+        const properties = [
+            'direction', 'boxSizing', 'width', 'height', 'overflowX', 'overflowY',
+            'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+            'borderStyle', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+            'fontStyle', 'fontVariant', 'fontWeight', 'fontStretch', 'fontSize',
+            'fontSizeAdjust', 'lineHeight', 'fontFamily', 'textAlign', 'textTransform',
+            'textIndent', 'textDecoration', 'letterSpacing', 'wordSpacing', 'tabSize', 'MozTabSize'
+        ];
+        properties.forEach(prop => {
+            mirror.style[prop] = computed[prop];
+        });
+        mirror.style.position = 'absolute';
+        mirror.style.top = '0';
+        mirror.style.left = '0';
+        mirror.style.visibility = 'hidden';
+        mirror.style.width = `${textarea.clientWidth}px`;
+        mirror.style.border = 'none';
+        mirror.style.boxSizing = 'border-box';
+
+        mirror.textContent = visibleText.substring(0, visPos);
+        const span = document.createElement('span');
+        span.textContent = '\u200b';
+        mirror.appendChild(span);
+
+        const spanTop = span.offsetTop;
+        const targetScrollTop = Math.max(0, spanTop - textarea.clientHeight / 2 + 20);
+
+        textarea.scrollTo({
+            top: targetScrollTop,
+            behavior: 'smooth'
+        });
+        if (ghostRef.current) {
+            ghostRef.current.scrollTop = targetScrollTop;
+        }
+    }, [visibleText]);
+
+    // Restore cursor position and scroll after collapse/expand or jump
     useEffect(() => {
-        if (pendingCursorRestoreRef.current && textareaRef.current) {
-            const { startFull, endFull } = pendingCursorRestoreRef.current;
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        
+        if (pendingCursorRestoreRef.current) {
+            const { startFull, endFull, scrollToCenter } = pendingCursorRestoreRef.current;
             pendingCursorRestoreRef.current = null;
             
-            const nextStartVis = fullToVisibleMap[startFull] ?? visibleText.length;
-            const nextEndVis = fullToVisibleMap[endFull] ?? visibleText.length;
+            // Look up the visible position; if the index falls inside a collapsed region
+            // (mapped to -1), clamp to the nearest valid position
+            let nextStartVis = getVisIdx(startFull);
+            let nextEndVis = getVisIdx(endFull);
             
-            textareaRef.current.focus();
-            textareaRef.current.setSelectionRange(nextStartVis, nextEndVis);
+            // If the cursor was inside a collapsed region, place it at the end of the heading line
+            if (nextStartVis === undefined || nextStartVis === -1) nextStartVis = 0;
+            if (nextEndVis === undefined || nextEndVis === -1) nextEndVis = nextStartVis;
+            
+            textarea.focus({ preventScroll: true });
+            textarea.setSelectionRange(nextStartVis, nextEndVis);
+            updateCursor();
+
+            if (scrollToCenter) {
+                requestAnimationFrame(() => {
+                    scrollToVisiblePosition(nextEndVis);
+                });
+            }
         }
-    }, [visibleText, fullToVisibleMap]);
+        
+        // Restore scroll position to prevent jump
+        if (pendingScrollRestoreRef.current !== null) {
+            const savedScroll = pendingScrollRestoreRef.current;
+            pendingScrollRestoreRef.current = null;
+            // Use requestAnimationFrame to apply after React's DOM update
+            requestAnimationFrame(() => {
+                textarea.scrollTop = savedScroll;
+                if (ghostRef.current) ghostRef.current.scrollTop = savedScroll;
+
+            });
+        }
+    }, [visibleText, getVisIdx, scrollToVisiblePosition]);
 
     // Parse and tokenize highlights in the editor
     const syntaxRanges = useMemo(() => {
+        if (!isColorizedActive) return [];
         const list = [];
 
         // 1. Headings
@@ -271,7 +509,7 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
 
         list.sort((a, b) => a.start - b.start);
         return list;
-    }, [visibleText, editorColorizeHeadings, editorColorizeCrossRefs, editorColorizeFigures, editorColorizeEquations]);
+    }, [visibleText, isColorizedActive, editorColorizeHeadings, editorColorizeCrossRefs, editorColorizeFigures, editorColorizeEquations]);
 
     // Fallback default tags if not configured
     const DEFAULT_COMMENT_TAGS = {
@@ -345,16 +583,18 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
         const start = textarea.selectionStart;
         const end = textarea.selectionEnd;
         const text = textarea.value;
-        const selectedText = text.substring(start, end);
-        const replacement = before + selectedText + after;
+        const selText = text.substring(start, end);
+        const replacement = before + selText + after;
 
         // Use execCommand to preserve undo history if possible (deprecated but widely supported)
         const success = document.execCommand('insertText', false, replacement);
 
         if (!success) {
-            // Fallback for newer browsers if they drop support (unlikely for now) or edge cases
-            const newText = text.substring(0, start) + replacement + text.substring(end);
-            onChange(newText);
+            // Fallback: map visible coords to full-text coords
+            const startFull = getFullIdx(start);
+            const endFull = getFullIdx(end);
+            const newFullText = value.substring(0, startFull) + replacement + value.substring(endFull);
+            onChange(newFullText);
 
             // Manually restore cursor
             setTimeout(() => {
@@ -362,12 +602,8 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
                 textarea.setSelectionRange(start + before.length, end + before.length);
             }, 0);
         } else {
-            // If success, the cursor is usually arguably placed at the end of insertion. 
-            // We might want to select the 'middle' part if it was a wrapper.
-            // But execCommand places cursor at end.
-            // Let's try to adjust selection if wrapping
             setTimeout(() => {
-                textarea.setSelectionRange(start + before.length, start + before.length + selectedText.length);
+                textarea.setSelectionRange(start + before.length, start + before.length + selText.length);
             }, 0);
         }
     };
@@ -380,15 +616,18 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
         const start = textarea.selectionStart;
         const end = textarea.selectionEnd;
         const text = textarea.value;
-        const selectedText = text.substring(start, end);
-        const lines = selectedText.split('\n');
+        const selText = text.substring(start, end);
+        const lines = selText.split('\n');
         const replacement = lines.map(line => prefix + line).join('\n');
 
         const success = document.execCommand('insertText', false, replacement);
 
         if (!success) {
-            const newText = text.substring(0, start) + replacement + text.substring(end);
-            onChange(newText);
+            // Fallback: map visible coords to full-text coords
+            const startFull = getFullIdx(start);
+            const endFull = getFullIdx(end);
+            const newFullText = value.substring(0, startFull) + replacement + value.substring(endFull);
+            onChange(newFullText);
 
             setTimeout(() => {
                 textarea.focus();
@@ -521,6 +760,82 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
         updateCursor();
     }, [updateCursor]);
 
+    const jumpToPosition = useCallback((targetFullIndex) => {
+        if (targetFullIndex < 0 || targetFullIndex > value.length) return;
+
+        const lines = value.split('\n');
+        let charCount = 0;
+        let targetLineIndex = 0;
+        for (let i = 0; i < lines.length; i++) {
+            const lineLen = lines[i].length;
+            if (charCount + lineLen >= targetFullIndex || i === lines.length - 1) {
+                targetLineIndex = i;
+                break;
+            }
+            charCount += lineLen + 1;
+        }
+
+        // Check if targetLineIndex is collapsed under any heading
+        let needUncollapse = false;
+        const headingToUncollapse = [];
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const lvl = getHeadingLevel(line);
+            if (lvl > 0 && collapsedHeadingLines.has(i)) {
+                let j = i + 1;
+                while (j < lines.length) {
+                    const nextLvl = getHeadingLevel(lines[j]);
+                    if (nextLvl > 0 && nextLvl <= lvl) break;
+                    j++;
+                }
+                if (targetLineIndex >= i && targetLineIndex < j) {
+                    needUncollapse = true;
+                    headingToUncollapse.push(i);
+                }
+            }
+        }
+
+        if (needUncollapse) {
+            setCollapsedHeadingLines(prev => {
+                const next = new Set(prev);
+                headingToUncollapse.forEach(h => next.delete(h));
+                return next;
+            });
+            pendingCursorRestoreRef.current = {
+                startFull: targetFullIndex,
+                endFull: targetFullIndex,
+                scrollToCenter: true
+            };
+        } else {
+            const textarea = textareaRef.current;
+            if (!textarea) return;
+
+            const visPos = getVisIdx(targetFullIndex);
+            if (visPos !== undefined && visPos !== -1) {
+                textarea.focus({ preventScroll: true });
+                textarea.setSelectionRange(visPos, visPos);
+                updateCursor();
+
+                requestAnimationFrame(() => {
+                    scrollToVisiblePosition(visPos);
+                });
+            }
+        }
+    }, [value, getVisIdx, collapsedHeadingLines, updateCursor, scrollToVisiblePosition]);
+
+    const handleJumpToWord = useCallback((wordInfo) => {
+        const targetPos = findWordEndPositionInMarkdown(value, wordInfo);
+        if (targetPos !== -1) {
+            jumpToPosition(targetPos);
+        }
+    }, [value, jumpToPosition]);
+
+    useEffect(() => {
+        if (onRegisterJumpTo) {
+            onRegisterJumpTo(handleJumpToWord);
+        }
+    }, [onRegisterJumpTo, handleJumpToWord]);
+
     // Close dropdown menus on outside click
     useEffect(() => {
         const handleClickOutside = (e) => {
@@ -600,21 +915,25 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
 
     // Mapped comment ranges in visibleText
     const visibleCommentRanges = useMemo(() => {
+        if (!commentRanges || commentRanges.length === 0) return [];
         const list = [];
         for (const r of commentRanges) {
             if (isIndexCollapsed(r.start)) continue;
-            const visStart = fullToVisibleMap[r.start];
-            const visEnd = fullToVisibleMap[r.end];
+            const visStart = getVisIdx(r.start);
+            const visEnd = getVisIdx(r.end);
             if (visStart !== -1 && visEnd !== -1 && visStart !== visEnd) {
                 list.push({ start: visStart, end: visEnd, id: r.id, comment: r.comment });
             }
         }
         list.sort((a, b) => a.start - b.start);
         return list;
-    }, [commentRanges, fullToVisibleMap, isIndexCollapsed]);
+    }, [commentRanges, getVisIdx, isIndexCollapsed]);
 
     // --- Build ghost overlay content: full text with highlight spans + suggestion ---
     const renderGhostContent = () => {
+        if (!isColorizedActive && !suggestion && visibleCommentRanges.length === 0) {
+            return null;
+        }
         const cursorPos = cursorRef.current?.start || 0;
 
         // Collect all boundary indices
@@ -678,7 +997,13 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
             segments = newSegments;
         }
 
+        let charPos = 0;
         return segments.map((s, i) => {
+            const segCharPos = charPos;
+            if (s.type !== 'suggestion') {
+                charPos += s.text.length;
+            }
+
             if (s.type === 'suggestion') {
                 return <span key={i} className="suggestion">{s.text}</span>;
             }
@@ -699,6 +1024,61 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
             if (s.commentId) {
                 style.backgroundColor = `${s.commentColor}33`;
                 style.borderBottom = `2px solid ${s.commentColor}`;
+            }
+
+            // Embed folding chevron directly inside the heading span
+            let chevron = null;
+            if (editorEnableFolding) {
+                const isLineStart = segCharPos === 0 || visibleText[segCharPos - 1] === '\n';
+                if (isLineStart) {
+                    const nextNL = visibleText.indexOf('\n', segCharPos);
+                    const fullLine = nextNL === -1 ? visibleText.substring(segCharPos) : visibleText.substring(segCharPos, nextNL);
+                    const lvl = getHeadingLevel(fullLine);
+                    if (lvl > 0) {
+                        const fullCharIdx = getFullIdx(segCharPos);
+                        const originalLineIndex = value.substring(0, fullCharIdx).split('\n').length - 1;
+                        const isCollapsed = collapsedHeadingLines.has(originalLineIndex);
+                        chevron = (
+                            <button
+                                key={`chev-${i}`}
+                                onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleSectionCollapse(originalLineIndex); }}
+                                onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                                style={{
+                                    position: 'absolute',
+                                    left: '-30px',
+                                    top: '2px',
+                                    width: '18px',
+                                    height: '18px',
+                                    background: 'var(--bg-panel)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: '4px',
+                                    color: 'var(--text-secondary)',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    pointerEvents: 'auto',
+                                    padding: 0,
+                                    boxShadow: 'var(--shadow-sm)',
+                                    zIndex: 20
+                                }}
+                                className="folding-chevron-btn"
+                                title={isCollapsed ? 'Expand section' : 'Collapse section'}
+                            >
+                                {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                            </button>
+                        );
+                    }
+                }
+            }
+
+            if (chevron) {
+                return (
+                    <span key={i} style={{ ...style, position: 'relative' }}>
+                        {chevron}
+                        {s.text}
+                    </span>
+                );
             }
 
             return <span key={i} style={style}>{s.text}</span>;
@@ -747,61 +1127,7 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
         if (onCommentPositionsChange) onCommentPositionsChange(positions);
     }, [visibleCommentRanges, visibleText, onCommentPositionsChange]);
 
-    const computeHeadingPositions = useCallback(() => {
-        const textarea = textareaRef.current;
-        const mirror = positionMirrorRef.current;
-        if (!textarea || !mirror) return;
 
-        const lines = visibleText.split('\n');
-        const positions = [];
-        let charCount = 0;
-
-        const computed = window.getComputedStyle(textarea);
-        const properties = [
-            'fontFamily', 'fontSize', 'fontWeight', 'fontStyle',
-            'lineHeight', 'padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
-            'whiteSpace', 'wordWrap', 'overflowWrap', 'wordBreak',
-            'letterSpacing', 'wordSpacing', 'tabSize', 'MozTabSize',
-            'textTransform', 'textIndent'
-        ];
-        properties.forEach(prop => { mirror.style[prop] = computed[prop]; });
-        mirror.style.position = 'absolute';
-        mirror.style.top = '0';
-        mirror.style.left = '0';
-        mirror.style.visibility = 'hidden';
-        mirror.style.width = `${textarea.clientWidth}px`;
-        mirror.style.border = 'none';
-        mirror.style.boxSizing = 'border-box';
-        mirror.style.whiteSpace = 'pre-wrap';
-        mirror.style.wordWrap = 'break-word';
-        mirror.style.overflow = 'hidden';
-
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            const lvl = getHeadingLevel(line);
-            if (lvl > 0) {
-                mirror.textContent = visibleText.substring(0, charCount);
-                const marker = document.createElement('span');
-                marker.textContent = '\u200b';
-                mirror.appendChild(marker);
-                const yTop = marker.offsetTop;
-                
-                const originalLineIndex = visibleToFullMap.length > charCount
-                    ? value.substring(0, visibleToFullMap[charCount]).split('\n').length - 1
-                    : i;
-
-                positions.push({
-                    lineIndex: i,
-                    originalLineIndex,
-                    level: lvl,
-                    y: yTop,
-                    isCollapsed: line.endsWith(' ⋯')
-                });
-            }
-            charCount += line.length + 1;
-        }
-        setHeadingPositions(positions);
-    }, [visibleText, value, visibleToFullMap]);
 
     useEffect(() => {
         if (!comments || comments.length === 0) {
@@ -816,26 +1142,16 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
         return () => clearTimeout(handler);
     }, [computeCommentPositions, visibleText, comments, onCommentPositionsChange]);
 
-    useEffect(() => {
-        if (!editorEnableFolding) {
-            setHeadingPositions([]);
-            return;
-        }
-        const handler = setTimeout(() => {
-            computeHeadingPositions();
-        }, 100);
-        return () => clearTimeout(handler);
-    }, [computeHeadingPositions, visibleText, editorEnableFolding]);
+
 
     // Recompute on resize        
     useEffect(() => {
         const handleResize = () => {
             computeCommentPositions();
-            computeHeadingPositions();
         };
         window.addEventListener('resize', handleResize);
         return () => window.removeEventListener('resize', handleResize);
-    }, [computeCommentPositions, computeHeadingPositions]);
+    }, [computeCommentPositions]);
 
     const acceptSuggestion = useCallback(() => {
         if (!suggestion) return;
@@ -1014,8 +1330,27 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
             if (abortRef.current) abortRef.current.abort();
             if (onAiThinking) onAiThinking(false);
         };
-    }, [onAiThinking]);    const isColorizedActive = editorColorizeHeadings || editorColorizeCrossRefs || editorColorizeFigures || editorColorizeEquations;
-    const activePaddingLeft = (editorEnableFolding && headingPositions.length > 0) ? '45px' : '32px';
+    }, [onAiThinking]);
+
+    // Check if any headings exist in visible text for left padding
+    const hasVisibleHeadings = useMemo(() => {
+        if (!editorEnableFolding) return false;
+        return visibleText.split('\n').some(line => getHeadingLevel(line) > 0);
+    }, [visibleText, editorEnableFolding]);
+    const activePaddingLeft = hasVisibleHeadings ? '45px' : '32px';
+
+    const sharedEditorStyle = {
+        fontFamily: 'var(--font-mono)',
+        fontSize: 'var(--editor-font-size, 14px)',
+        lineHeight: '1.7',
+        paddingTop: '32px',
+        paddingRight: '32px',
+        paddingBottom: '32px',
+        paddingLeft: activePaddingLeft,
+        tabSize: 4,
+        MozTabSize: 4,
+        boxSizing: 'border-box'
+    };
 
     const handleScroll = (e) => {
         updateCaretPosition();
@@ -1024,9 +1359,7 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
             ghostRef.current.scrollTop = scrollTop;
             ghostRef.current.scrollLeft = e.target.scrollLeft;
         }
-        if (gutterRef.current) {
-            gutterRef.current.scrollTop = scrollTop;
-        }
+
         if (onEditorScrollChange) onEditorScrollChange(scrollTop);
     };
 
@@ -1194,57 +1527,18 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
             {/* Text Area */}
             <div className="textarea-wrapper">
                 {/* Mirror for caret position logic */}
-                <div ref={mirrorRef} className="textarea-mirror" style={{ paddingLeft: activePaddingLeft }} aria-hidden="true" />
+                <div ref={mirrorRef} className="textarea-mirror" style={sharedEditorStyle} aria-hidden="true" />
                 {/* Hidden mirror for computing comment Y positions */}
-                <div ref={positionMirrorRef} className="textarea-mirror" style={{ paddingLeft: activePaddingLeft }} aria-hidden="true" />
+                <div ref={positionMirrorRef} className="textarea-mirror" style={sharedEditorStyle} aria-hidden="true" />
 
                 {/* Ghost Overlay for highlights + AI suggestions */}
-                <div ref={ghostRef} className="ghost-overlay" style={{ color: isColorizedActive ? 'var(--text-primary)' : 'transparent', paddingLeft: activePaddingLeft }} aria-hidden="true">
+                <div ref={ghostRef} className="ghost-overlay" style={{
+                    ...sharedEditorStyle,
+                    color: isColorizedActive ? 'var(--text-primary)' : 'transparent'
+                }} aria-hidden="true">
                     {renderGhostContent()}
                 </div>
 
-                {/* Folding Gutter */}
-                {editorEnableFolding && headingPositions.length > 0 && (
-                    <div ref={gutterRef} className="folding-gutter" style={{
-                        position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        bottom: 0,
-                        width: '40px',
-                        overflow: 'hidden',
-                        pointerEvents: 'none',
-                        zIndex: 10
-                    }} aria-hidden="true">
-                        {headingPositions.map(pos => (
-                            <button
-                                key={pos.lineIndex}
-                                onClick={() => toggleSectionCollapse(pos.originalLineIndex)}
-                                style={{
-                                    position: 'absolute',
-                                    top: `${pos.y}px`,
-                                    left: '12px',
-                                    width: '18px',
-                                    height: '18px',
-                                    background: 'var(--bg-panel)',
-                                    border: '1px solid var(--border-color)',
-                                    borderRadius: '4px',
-                                    color: 'var(--text-secondary)',
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    pointerEvents: 'auto',
-                                    padding: 0,
-                                    boxShadow: 'var(--shadow-sm)'
-                                }}
-                                className="folding-chevron-btn"
-                                title={pos.isCollapsed ? "Expand section" : "Collapse section"}
-                            >
-                                {pos.isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-                            </button>
-                        ))}
-                    </div>
-                )}
 
                 {/* Improve/Comment Button Widget */}
                 {showWidget && (
@@ -1309,8 +1603,8 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
                                             if (newCommentText.trim()) {
                                                 const start = selectionRange?.start || 0;
                                                 const end = selectionRange?.end || 0;
-                                                const startFull = visibleToFullMap[start] || 0;
-                                                const endFull = visibleToFullMap[end] || 0;
+                                                const startFull = getFullIdx(start);
+                                                const endFull = getFullIdx(end);
                                                 const startLine = value.substring(0, startFull).split('\n').length;
                                                 // Capture context
                                                 const contextBefore = value.substring(Math.max(0, startFull - 20), startFull);
@@ -1369,8 +1663,8 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
                                         if (newCommentText.trim()) {
                                             const start = selectionRange?.start || 0;
                                             const end = selectionRange?.end || 0;
-                                            const startFull = visibleToFullMap[start] || 0;
-                                            const endFull = visibleToFullMap[end] || 0;
+                                            const startFull = getFullIdx(start);
+                                            const endFull = getFullIdx(end);
                                             const startLine = value.substring(0, startFull).split('\n').length;
                                             const contextBefore = value.substring(Math.max(0, startFull - 20), startFull);
                                             const contextAfter = value.substring(endFull, Math.min(value.length, endFull + 20));
@@ -1430,9 +1724,9 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
                     value={visibleText}
                     onChange={handleTextareaChange}
                     style={{
+                        ...sharedEditorStyle,
                         color: isColorizedActive ? 'transparent' : 'var(--text-primary)',
-                        caretColor: 'var(--text-primary)',
-                        paddingLeft: activePaddingLeft
+                        caretColor: 'var(--text-primary)'
                     }}
                     className="main-textarea"
                     placeholder="# Start writing..."
@@ -1680,6 +1974,7 @@ export function Editor({ value, onChange, mode, onUploadImage, onPasteImage, set
     );
 }
 
+export const Editor = React.memo(EditorComponent);
 
 function ToolBtn({ icon, label, onClick, title }) {
     return (

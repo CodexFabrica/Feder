@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronUp, Trash2, Plus, X, Link2, Tag } from 'lucide-react';
 
-export function MetadataForm({ metadata, onChange, mode, isNote, isIdea, notesList = [], bibFiles = [], currentFilename, projectMetadata }) {
+function MetadataFormComponent({ metadata, onChange, mode, isNote, isIdea, notesList = [], bibFiles = [], currentFilename, projectMetadata }) {
     const enableReferences = projectMetadata?.enableReferences !== false;
     const [isExpanded, setIsExpanded] = useState(false);
 
@@ -918,3 +918,5 @@ export function MetadataForm({ metadata, onChange, mode, isNote, isIdea, notesLi
         </div>
     );
 }
+
+export const MetadataForm = React.memo(MetadataFormComponent);

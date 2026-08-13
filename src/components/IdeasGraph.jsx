@@ -109,6 +109,8 @@ export function IdeasGraph({ content }) {
     const simulationLinksRef = useRef([]);
     const draggedNodeRef = useRef(null);
     const animationFrameRef = useRef(null);
+    const startSimulationRef = useRef(null);
+    const drawCallbackRef = useRef(null);
 
     // Parse ideas from content
     const { sections, ideas, links: ideaLinks } = useMemo(() => {
@@ -221,6 +223,7 @@ export function IdeasGraph({ content }) {
             y: height / 2 - centerY * newScale,
             scale: newScale
         };
+        drawCallbackRef.current?.();
     };
 
     // Auto-fit on ideas change
@@ -309,14 +312,18 @@ export function IdeasGraph({ content }) {
                 n.vy += (cy - n.y) * centerCoeff;
             });
 
-            // 4. Update positions
+            // 4. Update positions with damping and measure total kinetic movement
+            let totalMovement = 0;
             nodesArr.forEach(n => {
                 if (n === draggedNodeRef.current) return;
                 n.x += n.vx;
                 n.y += n.vy;
                 n.vx *= damping;
                 n.vy *= damping;
+                totalMovement += Math.abs(n.vx) + Math.abs(n.vy);
             });
+
+            return totalMovement;
         };
 
         const drawCanvas = () => {
@@ -489,16 +496,40 @@ export function IdeasGraph({ content }) {
             ctx.restore();
         };
 
+        drawCallbackRef.current = drawCanvas;
+
+        let isRunning = true;
         const tick = () => {
-            runPhysics();
+            if (!isRunning) return;
+            const movement = runPhysics();
             drawCanvas();
+
+            // When nodes settle and nothing is dragged, stop animation loop to conserve CPU/RAM
+            if (movement < 0.05 && !draggedNodeRef.current) {
+                simulationNodesRef.current.forEach(n => { n.vx = 0; n.vy = 0; });
+                drawCanvas();
+                animationFrameRef.current = null;
+                return;
+            }
+
             animationFrameRef.current = requestAnimationFrame(tick);
         };
 
-        animationFrameRef.current = requestAnimationFrame(tick);
+        const startSimulation = () => {
+            if (!animationFrameRef.current) {
+                animationFrameRef.current = requestAnimationFrame(tick);
+            }
+        };
+
+        startSimulationRef.current = startSimulation;
+        startSimulation();
 
         return () => {
-            cancelAnimationFrame(animationFrameRef.current);
+            isRunning = false;
+            if (animationFrameRef.current) {
+                cancelAnimationFrame(animationFrameRef.current);
+                animationFrameRef.current = null;
+            }
         };
     }, [searchQuery, hoveredNode, activeLegendItem]);
 
@@ -562,6 +593,7 @@ export function IdeasGraph({ content }) {
                 x: e.clientX - startPanRef.current.x,
                 y: e.clientY - startPanRef.current.y
             };
+            drawCallbackRef.current?.();
             return;
         }
 
@@ -574,6 +606,7 @@ export function IdeasGraph({ content }) {
             n.fy = pos.y;
             n.vx = 0;
             n.vy = 0;
+            startSimulationRef.current?.();
             return;
         }
 
@@ -596,6 +629,7 @@ export function IdeasGraph({ content }) {
             draggedNodeRef.current.fx = null;
             draggedNodeRef.current.fy = null;
             draggedNodeRef.current = null;
+            startSimulationRef.current?.();
         }
     };
 
@@ -616,6 +650,7 @@ export function IdeasGraph({ content }) {
         const transY = mouseY - (mouseY - transformRef.current.y) * (newScale / oldScale);
 
         transformRef.current = { x: transX, y: transY, scale: newScale };
+        drawCallbackRef.current?.();
     };
 
     // Legend items

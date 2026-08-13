@@ -10,6 +10,9 @@ import { ChevronDown, ChevronRight, List, FileText, Sparkles, MessageSquare, Che
 import { NotesGraph } from './NotesGraph';
 import { IdeasGraph } from './IdeasGraph';
 
+const STATIC_REMARK_PLUGINS = [remarkMath, remarkGfm];
+const STATIC_REHYPE_PLUGINS = [[rehypeRaw, { passThrough: ['math', 'inlineMath'] }], rehypeKatex];
+
 
 // Helper to split markdown by level 1 headers
 const splitByH1 = (text) => {
@@ -54,6 +57,143 @@ const splitByH1 = (text) => {
     }
 
     return sections;
+};
+
+// Helper to extract the clicked word and its surrounding context from a mouse event in Preview
+export const getClickedWordInfo = (e) => {
+    let node = null;
+    let offset = 0;
+
+    if (document.caretRangeFromPoint) {
+        const range = document.caretRangeFromPoint(e.clientX, e.clientY);
+        if (range) {
+            node = range.startContainer;
+            offset = range.startOffset;
+        }
+    } else if (document.caretPositionFromPoint) {
+        const pos = document.caretPositionFromPoint(e.clientX, e.clientY);
+        if (pos) {
+            node = pos.offsetNode;
+            offset = pos.offset;
+        }
+    }
+
+    // Fallback: If node is an Element instead of a Text node
+    if (!node || node.nodeType !== Node.TEXT_NODE) {
+        const target = e.target;
+        if (target) {
+            const textNodes = [];
+            const walk = document.createTreeWalker(target, NodeFilter.SHOW_TEXT, null, false);
+            let n;
+            while ((n = walk.nextNode())) textNodes.push(n);
+            if (textNodes.length === 1) {
+                node = textNodes[0];
+                offset = 0;
+            } else if (textNodes.length > 1) {
+                node = textNodes[0];
+                offset = 0;
+            }
+        }
+    }
+
+    if (!node || node.nodeType !== Node.TEXT_NODE) {
+        return null;
+    }
+
+    const fullNodeText = node.textContent || '';
+    if (!fullNodeText.trim()) return null;
+
+    // Check if character is part of a word (alphanumeric, unicode letters/digits, underscore)
+    const isWordChar = (ch) => {
+        if (!ch) return false;
+        return /[^\s\.,;:!?\(\)\[\]\{\}"'`~<>\/\\=+\-*&^%$#@!|«»“”‘’¿¡]/.test(ch);
+    };
+
+    let start = Math.min(offset, fullNodeText.length);
+
+    if (start >= fullNodeText.length && start > 0) {
+        start = fullNodeText.length - 1;
+    }
+
+    if (!isWordChar(fullNodeText[start])) {
+        if (start > 0 && isWordChar(fullNodeText[start - 1])) {
+            start--;
+        } else if (start < fullNodeText.length - 1 && isWordChar(fullNodeText[start + 1])) {
+            start++;
+        } else {
+            return null;
+        }
+    }
+
+    let wordStart = start;
+    while (wordStart > 0 && isWordChar(fullNodeText[wordStart - 1])) {
+        wordStart--;
+    }
+
+    let wordEnd = start;
+    while (wordEnd < fullNodeText.length && isWordChar(fullNodeText[wordEnd])) {
+        wordEnd++;
+    }
+
+    const word = fullNodeText.substring(wordStart, wordEnd).trim();
+    if (!word) return null;
+
+    // Find enclosing block element (p, li, h1-h6, blockquote, td, th, etc.)
+    let blockElem = node.parentElement;
+    while (blockElem && !/^(P|H[1-6]|LI|BLOCKQUOTE|TD|TH|PRE|HEADER|FIGCAPTION)$/i.test(blockElem.tagName)) {
+        if (blockElem.classList?.contains('markdown-section-wrapper') || blockElem.classList?.contains('panel-preview')) {
+            break;
+        }
+        blockElem = blockElem.parentElement;
+    }
+
+    const blockText = (blockElem ? blockElem.textContent : fullNodeText) || '';
+
+    // Calculate prefix and suffix in the block
+    let prefix = '';
+    let suffix = '';
+    if (blockElem) {
+        try {
+            const preRange = document.createRange();
+            preRange.setStart(blockElem, 0);
+            preRange.setEnd(node, wordStart);
+            prefix = preRange.toString();
+
+            const postRange = document.createRange();
+            postRange.setStart(node, wordEnd);
+            postRange.setEnd(blockElem, blockElem.childNodes.length);
+            suffix = postRange.toString();
+        } catch (err) {
+            prefix = fullNodeText.substring(0, wordStart);
+            suffix = fullNodeText.substring(wordEnd);
+        }
+    } else {
+        prefix = fullNodeText.substring(0, wordStart);
+        suffix = fullNodeText.substring(wordEnd);
+    }
+
+    // Find section offset if inside a MarkdownSection
+    let sectionWrapper = node.parentElement;
+    let sectionOffset = null;
+    let sectionTitle = null;
+    while (sectionWrapper && !sectionWrapper.classList?.contains('panel-preview')) {
+        if (sectionWrapper.dataset?.sectionOffset !== undefined) {
+            sectionOffset = parseInt(sectionWrapper.dataset.sectionOffset, 10);
+            sectionTitle = sectionWrapper.dataset.sectionTitle || null;
+            break;
+        }
+        sectionWrapper = sectionWrapper.parentElement;
+    }
+
+    return {
+        word,
+        prefix,
+        suffix,
+        blockText,
+        sectionOffset,
+        sectionTitle,
+        tagName: blockElem?.tagName?.toLowerCase() || ''
+    };
 };
 
 // BibTeX, Citation, and Reference Helpers
@@ -494,10 +634,10 @@ const MarkdownSection = React.memo(({ title, content, offset, dirHandle, onUpdat
         // Preamble (no header)
         if (!content.trim()) return null;
         return (
-            <div className="prose preamble">
+            <div className="prose preamble" data-section-offset={offset} data-section-title="">
                 <ReactMarkdown
-                    remarkPlugins={[remarkMath, remarkGfm]}
-                    rehypePlugins={[[rehypeRaw, { passThrough: ['math', 'inlineMath'] }], rehypeKatex]}
+                    remarkPlugins={STATIC_REMARK_PLUGINS}
+                    rehypePlugins={STATIC_REHYPE_PLUGINS}
                     components={components}
                 >
                     {content}
@@ -510,12 +650,12 @@ const MarkdownSection = React.memo(({ title, content, offset, dirHandle, onUpdat
 
     if (!isCollapsible) {
         return (
-            <div className="markdown-section-wrapper">
+            <div className="markdown-section-wrapper" data-section-offset={offset} data-section-title={title || ''}>
                 <h1 className="section-h1-title" style={{ marginTop: '2rem' }}>{title}</h1>
                 <div className="prose section-content">
                     <ReactMarkdown
-                        remarkPlugins={[remarkMath, remarkGfm]}
-                        rehypePlugins={[[rehypeRaw, { passThrough: ['math', 'inlineMath'] }], rehypeKatex]}
+                        remarkPlugins={STATIC_REMARK_PLUGINS}
+                        rehypePlugins={STATIC_REHYPE_PLUGINS}
                         components={components}
                     >
                         {content}
@@ -526,7 +666,7 @@ const MarkdownSection = React.memo(({ title, content, offset, dirHandle, onUpdat
     }
 
     return (
-        <div className="markdown-section-wrapper">
+        <div className="markdown-section-wrapper" data-section-offset={offset} data-section-title={title || ''}>
             <div
                 className="section-collapsible-trigger"
                 onClick={() => setIsOpen(!isOpen)}
@@ -542,8 +682,8 @@ const MarkdownSection = React.memo(({ title, content, offset, dirHandle, onUpdat
             {isOpen && (
                 <div className="prose section-content">
                     <ReactMarkdown
-                        remarkPlugins={[remarkMath, remarkGfm]}
-                        rehypePlugins={[[rehypeRaw, { passThrough: ['math', 'inlineMath'] }], rehypeKatex]}
+                        remarkPlugins={STATIC_REMARK_PLUGINS}
+                        rehypePlugins={STATIC_REHYPE_PLUGINS}
                         components={components}
                     >
                         {content}
@@ -554,9 +694,49 @@ const MarkdownSection = React.memo(({ title, content, offset, dirHandle, onUpdat
     );
 });
 
-const MarkdownPreview = React.memo(function MarkdownPreview({ content, metadata, projectMetadata, dirHandle, mode, onUpdateContent, onUpdateMetadata, paperView, isEditingNote, isEditingIdea, onDocumentLinkClick }) {
+const MarkdownPreview = React.memo(function MarkdownPreview({ content, metadata, projectMetadata, dirHandle, mode, onUpdateContent, onUpdateMetadata, paperView, isEditingNote, isEditingIdea, onDocumentLinkClick, onNavigateToWord }) {
     const [coverOpen, setCoverOpen] = useState(true);
     const [tocOpen, setTocOpen] = useState(true);
+    const [isCtrlPressed, setIsCtrlPressed] = useState(false);
+
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key === 'Control' || e.key === 'Meta') {
+                setIsCtrlPressed(true);
+            }
+        };
+        const handleKeyUp = (e) => {
+            if (e.key === 'Control' || e.key === 'Meta') {
+                setIsCtrlPressed(false);
+            }
+        };
+        const handleBlur = () => {
+            setIsCtrlPressed(false);
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
+        window.addEventListener('blur', handleBlur);
+
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('keyup', handleKeyUp);
+            window.removeEventListener('blur', handleBlur);
+        };
+    }, []);
+
+    const handlePreviewClick = useCallback((e) => {
+        if (e.ctrlKey || e.metaKey) {
+            const wordInfo = getClickedWordInfo(e);
+            if (wordInfo && wordInfo.word) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (onNavigateToWord) {
+                    onNavigateToWord(wordInfo);
+                }
+            }
+        }
+    }, [onNavigateToWord]);
 
     const { title, authors, author, abstract, subtitle, showToC } = metadata || {};
 
@@ -765,7 +945,8 @@ const MarkdownPreview = React.memo(function MarkdownPreview({ content, metadata,
 
     return (
         <div
-            className={`panel-preview ${paperView ? 'paper-view-active' : ''} ${isResearch ? 'research-mode' : ''} ${isEngineer ? 'engineer-mode' : ''} ${isScript ? 'script-mode' : ''} ${isScholar ? 'scholar-mode' : ''} ${isJournalist ? 'journalist-mode' : ''}`}
+            className={`panel-preview ${isCtrlPressed ? 'ctrl-active' : ''} ${paperView ? 'paper-view-active' : ''} ${isResearch ? 'research-mode' : ''} ${isEngineer ? 'engineer-mode' : ''} ${isScript ? 'script-mode' : ''} ${isScholar ? 'scholar-mode' : ''} ${isJournalist ? 'journalist-mode' : ''}`}
+            onClickCapture={handlePreviewClick}
             style={{
 
                 '--scholar-accent': activeAccentColor,
@@ -1054,7 +1235,7 @@ const MarkdownPreview = React.memo(function MarkdownPreview({ content, metadata,
     );
 });
 
-export function PreviewWrapper({ settings, content, metadata, projectMetadata, dirHandle, mode, paperView, onUpdateContent, onUpdateMetadata, activeTab, onTabChange, improvementData, onApplyImprovement, onRetryImprovement, editorSelection, onAddComment, onReplyComment, onResolveComment, onDeleteComment, commentPositions, editorScrollTop, hasNotesDir, notesList, onFileSelect, currentFilename, hasIdeasDir, isEditingNote, isEditingIdea, currentFileContent }) {
+export function PreviewWrapper({ settings, content, metadata, projectMetadata, dirHandle, mode, paperView, onUpdateContent, onUpdateMetadata, activeTab, onTabChange, improvementData, onApplyImprovement, onRetryImprovement, editorSelection, onAddComment, onReplyComment, onResolveComment, onDeleteComment, commentPositions, editorScrollTop, hasNotesDir, notesList, onFileSelect, currentFilename, hasIdeasDir, isEditingNote, isEditingIdea, currentFileContent, onNavigateToWord }) {
 
     // Default to visualization if no tab provided
     const currentTab = activeTab || 'visualization';
@@ -1166,6 +1347,7 @@ export function PreviewWrapper({ settings, content, metadata, projectMetadata, d
                         isEditingNote={isEditingNote}
                         isEditingIdea={isEditingIdea}
                         onDocumentLinkClick={onDocumentLinkClick}
+                        onNavigateToWord={onNavigateToWord}
                     />
                 </div>
 

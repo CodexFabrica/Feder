@@ -43,6 +43,22 @@ const DEFAULT_COMMENT_TAGS = {
 const EMPTY_OBJECT = {};
 const EMPTY_ARRAY = [];
 
+function countWords(str) {
+  if (!str) return 0;
+  let count = 0;
+  let inWord = false;
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if (code <= 32) {
+      inWord = false;
+    } else if (!inWord) {
+      inWord = true;
+      count++;
+    }
+  }
+  return count;
+}
+
 function App() {
   const [theme, setTheme] = useState('light'); // 'light' | 'semi-dark' | 'dark'
   const [mode, setMode] = useState('journalist');
@@ -51,6 +67,28 @@ function App() {
   const [metadata, setMetadata] = useState({});
   const [projectMetadata, setProjectMetadata] = useState({ name: 'Untitled Project' });
   const [currentFile, setCurrentFile] = useState({ name: '', kind: 'md', handle: null, src: null });
+  const currentBlobUrlRef = useRef(null);
+
+  useEffect(() => {
+    if (currentFile?.src) {
+      if (currentBlobUrlRef.current && currentBlobUrlRef.current !== currentFile.src) {
+        URL.revokeObjectURL(currentBlobUrlRef.current);
+      }
+      currentBlobUrlRef.current = currentFile.src;
+    } else if (currentBlobUrlRef.current) {
+      URL.revokeObjectURL(currentBlobUrlRef.current);
+      currentBlobUrlRef.current = null;
+    }
+  }, [currentFile]);
+
+  useEffect(() => {
+    return () => {
+      if (currentBlobUrlRef.current) {
+        URL.revokeObjectURL(currentBlobUrlRef.current);
+        currentBlobUrlRef.current = null;
+      }
+    };
+  }, []);
   const [showMetadata, setShowMetadata] = useState(true);
   const [showExplorer, setShowExplorer] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
@@ -104,6 +142,7 @@ function App() {
 
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const cancelAiRef = React.useRef(null);
+  const jumpToWordRef = React.useRef(null);
 
   const {
     fileHandle,
@@ -1760,6 +1799,7 @@ function App() {
             onRequestImprovement={handleRequestImprovement}
             onSelectionChange={setEditorSelection}
             onRegisterCancel={(fn) => { cancelAiRef.current = fn; }}
+            onRegisterJumpTo={(fn) => { jumpToWordRef.current = fn; }}
             comments={metadata?.comments || []}
             commentTags={projectMetadata?.commentTags || DEFAULT_COMMENT_TAGS}
             onAddComment={handleAddComment}
@@ -1784,6 +1824,12 @@ function App() {
     }
   }, []);
 
+  const handleNavigateToWord = useCallback((wordInfo) => {
+    if (jumpToWordRef.current) {
+      jumpToWordRef.current(wordInfo);
+    }
+  }, []);
+
   const renderRight = () => (
     <Preview
       settings={settings}
@@ -1796,6 +1842,7 @@ function App() {
       onUpdateContent={handleUpdateFromPreview}
 
       onUpdateMetadata={setMetadata}
+      onNavigateToWord={handleNavigateToWord}
 
       // Tabs & Improvements
       activeTab={rightPanelTab}
@@ -1974,7 +2021,7 @@ function App() {
                 await saveSettings(newSettings);
               }}
               onUpdateProjectMetadata={handleUpdateProjectSettings}
-              wordCount={content ? content.trim().split(/\s+/).filter(w => w).length : 0}
+              wordCount={countWords(content)}
               paperView={paperView}
               onTogglePaperView={() => setPaperView(!paperView)}
               previewFont={projectMetadata?.previewFont}
