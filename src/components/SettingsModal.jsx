@@ -2,37 +2,37 @@ import React, { useState, useEffect } from 'react';
 import { X, Monitor, AlignJustify, FolderOpen, MessageSquare, Trash2, Plus, User, Palette, Cpu, Layers } from 'lucide-react';
 
 const PRESET_COLORS = [
-  '#ff4d4d', // Coral Red
-  '#ff944d', // Orange
-  '#ffcc4d', // Gold
-  '#e60000', // Deep Red
-  '#33ccff', // Sky Blue
-  '#3399ff', // Royal Blue
-  '#5c5cff', // Indigo
-  '#2eb8b8', // Deep Teal
-  '#20c997', // Mint
-  '#f06595', // Pink Rose
-  '#845ef7', // Violet
-  '#fcc419'  // Amber Yellow
+    '#ff4d4d', // Coral Red
+    '#ff944d', // Orange
+    '#ffcc4d', // Gold
+    '#e60000', // Deep Red
+    '#33ccff', // Sky Blue
+    '#3399ff', // Royal Blue
+    '#5c5cff', // Indigo
+    '#2eb8b8', // Deep Teal
+    '#20c997', // Mint
+    '#f06595', // Pink Rose
+    '#845ef7', // Violet
+    '#fcc419'  // Amber Yellow
 ];
 
 const DEFAULT_COMMENT_TAGS = {
-  major: [
-    { id: 'methodological', label: 'Methodological', color: '#ff4d4d' },
-    { id: 'conceptual', label: 'Conceptual', color: '#ff944d' },
-    { id: 'overreaching', label: 'Overreaching', color: '#ffcc4d' },
-    { id: 'ethical', label: 'Ethical concerns', color: '#e60000' }
-  ],
-  minor: [
-    { id: 'clarification', label: 'Clarification request', color: '#3399ff' },
-    { id: 'data_presentation', label: 'Data presentation', color: '#33ccff' },
-    { id: 'missing_reference', label: 'Missing reference', color: '#5c5cff' }
-  ],
-  minor_formal: [
-    { id: 'journal_guidelines', label: 'Journal guidelines', color: '#2eb8b8' },
-    { id: 'structure', label: 'Structure (move paragraph)', color: '#20c997' },
-    { id: 'editorial', label: 'Editorial', color: '#f06595' }
-  ]
+    major: [
+        { id: 'methodological', label: 'Methodological', color: '#ff4d4d' },
+        { id: 'conceptual', label: 'Conceptual', color: '#ff944d' },
+        { id: 'overreaching', label: 'Overreaching', color: '#ffcc4d' },
+        { id: 'ethical', label: 'Ethical concerns', color: '#e60000' }
+    ],
+    minor: [
+        { id: 'clarification', label: 'Clarification request', color: '#3399ff' },
+        { id: 'data_presentation', label: 'Data presentation', color: '#33ccff' },
+        { id: 'missing_reference', label: 'Missing reference', color: '#5c5cff' }
+    ],
+    minor_formal: [
+        { id: 'journal_guidelines', label: 'Journal guidelines', color: '#2eb8b8' },
+        { id: 'structure', label: 'Structure (move paragraph)', color: '#20c997' },
+        { id: 'editorial', label: 'Editorial', color: '#f06595' }
+    ]
 };
 
 export function SettingsModal({ onClose, metadata, onUpdate, mode, settings, onUpdateSettings }) {
@@ -56,7 +56,7 @@ export function SettingsModal({ onClose, metadata, onUpdate, mode, settings, onU
     const renderColorOption = (label, isColorizeKey, colorKey, defaultColor) => {
         const isColorize = localMeta[isColorizeKey] ?? true;
         const currentColor = localMeta[colorKey] || defaultColor;
-        
+
         return (
             <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 14, marginTop: 14 }}>
                 <div className="setting-row">
@@ -72,7 +72,7 @@ export function SettingsModal({ onClose, metadata, onUpdate, mode, settings, onU
                         <span className="slider round"></span>
                     </label>
                 </div>
-                
+
                 {isColorize && (
                     <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                         <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Color:</span>
@@ -271,7 +271,7 @@ export function SettingsModal({ onClose, metadata, onUpdate, mode, settings, onU
                             ))}
                         </div>
                         <div className="sidebar-footer-version">
-                            Feder Desktop v2.2.0
+                            Feder Desktop v2.5.0
                         </div>
                     </div>
 
@@ -493,7 +493,7 @@ export function SettingsModal({ onClose, metadata, onUpdate, mode, settings, onU
 
                                 <div className="settings-card">
                                     <h4 className="settings-card-title">Editor Highlights & Folding</h4>
-                                    
+
                                     <div className="setting-row">
                                         <div className="setting-info">
                                             <span className="setting-name">Heading Highlights</span>
@@ -508,7 +508,7 @@ export function SettingsModal({ onClose, metadata, onUpdate, mode, settings, onU
                                             <span className="slider round"></span>
                                         </label>
                                     </div>
-                                    
+
                                     {(localMeta.editorColorizeHeadings ?? true) && (
                                         <div style={{ paddingLeft: 12, borderLeft: '2px solid var(--accent-color)', marginTop: 10, display: 'flex', flexDirection: 'column', gap: 12 }}>
                                             <div className="setting-row">
@@ -526,7 +526,7 @@ export function SettingsModal({ onClose, metadata, onUpdate, mode, settings, onU
                                                     > Custom Color </button>
                                                 </div>
                                             </div>
-                                            
+
                                             {(localMeta.editorHeadingColorSource === 'custom') && (
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                                                     <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Custom Color:</span>
@@ -571,7 +571,7 @@ export function SettingsModal({ onClose, metadata, onUpdate, mode, settings, onU
                                             </div>
                                         </div>
                                     )}
-                                    
+
                                     {renderColorOption('Cross-Reference Highlights', 'editorColorizeCrossRefs', 'editorCrossRefColor', '#0066cc')}
                                     {renderColorOption('Figure Highlights', 'editorColorizeFigures', 'editorFigureColor', '#7f8c8d')}
                                     {renderColorOption('Equation Highlights', 'editorColorizeEquations', 'editorEquationColor', '#0b7285')}
@@ -590,20 +590,20 @@ export function SettingsModal({ onClose, metadata, onUpdate, mode, settings, onU
                                     return (
                                         <div className="settings-card" key={groupKey}>
                                             <h4 style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12, textTransform: 'uppercase' }}>{groupTitle}</h4>
-                                            
+
                                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                                                 {tagsInGroup.map(tag => (
                                                     <div key={tag.id} style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '8px 12px', background: 'var(--bg-panel)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
                                                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
                                                             <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
-                                                                <span 
+                                                                <span
                                                                     style={{ width: 14, height: 14, borderRadius: '50%', background: tag.color, cursor: 'pointer', display: 'inline-block', border: '1px solid rgba(0,0,0,0.15)', flexShrink: 0 }}
                                                                     onClick={() => setEditingTagColorId(editingTagColorId === tag.id ? null : tag.id)}
                                                                     title="Click to select a preset color"
                                                                 />
                                                                 <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tag.label}</span>
                                                             </div>
-                                                            <button 
+                                                            <button
                                                                 onClick={() => handleRemoveTagFromSettings(groupKey, tag.id)}
                                                                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff4757', display: 'flex', alignItems: 'center', padding: 0 }}
                                                                 title="Delete Tag"
@@ -611,11 +611,11 @@ export function SettingsModal({ onClose, metadata, onUpdate, mode, settings, onU
                                                                 <Trash2 size={13} />
                                                             </button>
                                                         </div>
-                                                        
+
                                                         {editingTagColorId === tag.id && (
                                                             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6, padding: '6px', background: 'var(--bg-app)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
                                                                 {PRESET_COLORS.map(color => (
-                                                                    <span 
+                                                                    <span
                                                                         key={color}
                                                                         onClick={() => {
                                                                             handleUpdateTagColor(groupKey, tag.id, color);
@@ -640,15 +640,15 @@ export function SettingsModal({ onClose, metadata, onUpdate, mode, settings, onU
                                             {/* Add New Tag in Group */}
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12, padding: '10px', background: 'rgba(150, 150, 150, 0.03)', borderRadius: '10px', border: '1px dashed var(--border-color)' }}>
                                                 <div style={{ display: 'flex', gap: 8 }}>
-                                                    <input 
+                                                    <input
                                                         type="text"
                                                         placeholder="New tag label..."
                                                         value={newTagNames[groupKey] || ''}
-                                                        onChange={e => setNewTagNames({...newTagNames, [groupKey]: e.target.value})}
+                                                        onChange={e => setNewTagNames({ ...newTagNames, [groupKey]: e.target.value })}
                                                         style={{ flex: 1, padding: '5px 10px', fontSize: '0.8rem', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--bg-panel)', color: 'var(--text-primary)' }}
                                                         onKeyDown={e => { if (e.key === 'Enter') handleAddTagInSettings(groupKey); }}
                                                     />
-                                                    <button 
+                                                    <button
                                                         onClick={() => handleAddTagInSettings(groupKey)}
                                                         style={{ padding: '0 12px', background: 'var(--accent-color)', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.8rem', fontWeight: 600 }}
                                                     >
@@ -658,9 +658,9 @@ export function SettingsModal({ onClose, metadata, onUpdate, mode, settings, onU
                                                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                                                     <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Tag Color:</span>
                                                     {PRESET_COLORS.map(color => (
-                                                        <span 
+                                                        <span
                                                             key={color}
-                                                            onClick={() => setNewTagColors({...newTagColors, [groupKey]: color})}
+                                                            onClick={() => setNewTagColors({ ...newTagColors, [groupKey]: color })}
                                                             style={{
                                                                 width: 14, height: 14, borderRadius: '50%', background: color,
                                                                 cursor: 'pointer', border: (newTagColors[groupKey] || PRESET_COLORS[0]) === color ? '1.5px solid var(--text-primary)' : '1px solid transparent',

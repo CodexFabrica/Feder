@@ -1,15 +1,15 @@
 # My Research Project
-author: Dr. Alexis
-subtitle: Analysis of Urban Seismic Risk
+author: Alexis
+subtitle: dummy project file to test the Journal Editor.
 ---
 
 # Introduction
 This is a dummy project file to test the **Journal Editor**.
 
 ## Data
-We stand on the shoulders of giants.
+We stand on the shoulders of giants. [@]
 
-> "Seismic risk is not just about magnitudes, it's about vulnerability."
+> "dummy project file to test the Journal Editor."
 
 ## References
 We need to cite our sources.
