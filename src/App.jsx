@@ -18,6 +18,7 @@ import { WelcomeScreen } from './components/WelcomeScreen';
 import { SettingsModal } from './components/SettingsModal';
 import { StatusBar } from './components/StatusBar';
 import { PdfExportModal } from './components/PdfExportModal';
+import { DocumentTabs } from './components/DocumentTabs';
 import html2pdf from 'html2pdf.js';
 
 const isElectron = /Electron/i.test(navigator.userAgent);
@@ -67,6 +68,7 @@ function App() {
   const [metadata, setMetadata] = useState({});
   const [projectMetadata, setProjectMetadata] = useState({ name: 'Untitled Project' });
   const [currentFile, setCurrentFile] = useState({ name: '', kind: 'md', handle: null, src: null });
+  const [openTabs, setOpenTabs] = useState([]);
   const currentBlobUrlRef = useRef(null);
 
   useEffect(() => {
@@ -849,12 +851,15 @@ function App() {
       const contentObj = await readFile(mdFile);
       setFileHandle(mdFile);
       parseFileContent(contentObj.text, mdFile.name);
-      setCurrentFile({ name: mdFile.name, kind: 'md', handle: mdFile });
+      const initialTab = { name: mdFile.name, kind: 'md', handle: mdFile };
+      setCurrentFile(initialTab);
+      setOpenTabs([initialTab]);
     } else {
       setContent('');
       setPreviewContent('');
       setMetadata({});
       setCurrentFile({ name: 'Untitled', kind: 'md', handle: null });
+      setOpenTabs([]);
     }
     // Reset dirty state after loading
     setTimeout(() => setIsDirty(false), 100);
@@ -1356,7 +1361,6 @@ function App() {
     // AUTOSAVE BEFORE SWITCHING
     if (latestIsDirty) await latestHandleSave();
 
-    // LOADING REMOVED as requested
     try {
       if (handle.kind === 'file') {
         const name = handle.name;
@@ -1371,13 +1375,43 @@ function App() {
           if (name.endsWith('.txt')) kind = 'txt';
 
           parseFileContent(data.text, name);
-          setCurrentFile({ name: displayName, kind, handle });
-        } else if (name.match(/\.(png|jpg|jpeg|svg|gif)$/i)) {
+          const newFileObj = { name: displayName, kind, handle };
+          setCurrentFile(newFileObj);
+          setOpenTabs(prev => {
+            if (prev.some(t => t.name === displayName)) return prev;
+            return [...prev, newFileObj];
+          });
+        } else if (name.match(/\.(png|jpe?g|svg|gif|webp|bmp|ico|tiff?|avif)$/i)) {
           // Image visualization
           const file = await handle.getFile();
-          const src = URL.createObjectURL(file);
-          setCurrentFile({ name: displayName, kind: 'image', handle, src });
-          // We don't change content/metadata, just the view.
+          let src = '';
+          if (file instanceof Blob) {
+            src = URL.createObjectURL(file);
+          } else if (file && typeof file.arrayBuffer === 'function') {
+            const buffer = await file.arrayBuffer();
+            const ext = (name.split('.').pop() || '').toLowerCase();
+            const mimeTypes = {
+              png: 'image/png',
+              jpg: 'image/jpeg',
+              jpeg: 'image/jpeg',
+              svg: 'image/svg+xml',
+              gif: 'image/gif',
+              webp: 'image/webp',
+              bmp: 'image/bmp',
+              ico: 'image/x-icon',
+              avif: 'image/avif',
+              tiff: 'image/tiff'
+            };
+            const mime = mimeTypes[ext] || 'image/png';
+            const blob = new Blob([buffer], { type: mime });
+            src = URL.createObjectURL(blob);
+          }
+          const newFileObj = { name: displayName, kind: 'image', handle, src };
+          setCurrentFile(newFileObj);
+          setOpenTabs(prev => {
+            if (prev.some(t => t.name === displayName)) return prev;
+            return [...prev, newFileObj];
+          });
         }
       }
       setTimeout(() => setIsDirty(false), 100);
@@ -1385,6 +1419,50 @@ function App() {
       // No loading state to turn off
     }
   }, []);
+
+  const handleSelectTab = useCallback(async (tab) => {
+    const { isDirty: latestIsDirty, handleSave: latestHandleSave, currentFile: latestCurrentFile } = latestStateRef.current;
+    if (tab.name === latestCurrentFile.name) return;
+    if (latestIsDirty) {
+      await latestHandleSave();
+    }
+    if (tab.handle) {
+      await handleFileSelect(tab.handle, tab.name);
+    } else {
+      setCurrentFile({ name: tab.name, kind: tab.kind || 'md', handle: tab.handle || null, src: tab.src || null });
+    }
+  }, [handleFileSelect]);
+
+  const handleCloseTab = useCallback(async (tabToClose) => {
+    const { isDirty: latestIsDirty, handleSave: latestHandleSave, currentFile: latestCurrentFile, openTabs: latestOpenTabs } = latestStateRef.current;
+
+    // Autosave if the tab being closed is currently active and has unsaved changes
+    if (tabToClose.name === latestCurrentFile.name && latestIsDirty) {
+      await latestHandleSave();
+    }
+
+    const nextTabs = (latestOpenTabs || []).filter(t => t.name !== tabToClose.name);
+    setOpenTabs(nextTabs);
+
+    if (tabToClose.name === latestCurrentFile.name) {
+      if (nextTabs.length > 0) {
+        const currentIndex = (latestOpenTabs || []).findIndex(t => t.name === tabToClose.name);
+        const nextIndex = Math.max(0, Math.min(currentIndex, nextTabs.length - 1));
+        const nextTab = nextTabs[nextIndex];
+        if (nextTab && nextTab.handle) {
+          await handleFileSelect(nextTab.handle, nextTab.name);
+        } else if (nextTab) {
+          setCurrentFile({ name: nextTab.name, kind: nextTab.kind || 'md', handle: nextTab.handle || null, src: nextTab.src || null });
+        }
+      } else {
+        setContent('');
+        setPreviewContent('');
+        setMetadata({});
+        setCurrentFile({ name: '', kind: 'md', handle: null });
+        setFileHandle(null);
+      }
+    }
+  }, [handleFileSelect]);
 
   const onUploadImage = useCallback(async () => {
     const { mode: latestMode, dirHandle: latestDirHandle, projectMetadata: latestProjectMetadata } = latestStateRef.current;
@@ -1495,6 +1573,7 @@ function App() {
           parts.pop();
           const newDisplayName = parts.length > 0 ? [...parts, newName].join('/') : newName;
           setCurrentFile(prev => ({ ...prev, name: newDisplayName }));
+          setOpenTabs(prev => prev.map(t => t.name === latestCurrentFile.name ? { ...t, name: newDisplayName } : t));
         }
 
         setRefreshTrigger(prev => prev + 1);
@@ -1536,6 +1615,7 @@ function App() {
           parts.pop();
           const newDisplayName = parts.length > 0 ? [...parts, newName].join('/') : newName;
           setCurrentFile(prev => ({ ...prev, name: newDisplayName, handle: newFileHandle }));
+          setOpenTabs(prev => prev.map(t => t.name === latestCurrentFile.name ? { ...t, name: newDisplayName, handle: newFileHandle } : t));
         }
 
         setRefreshTrigger(prev => prev + 1);
@@ -1732,6 +1812,12 @@ function App() {
         setFileHandle(null);
       }
 
+      setOpenTabs(prev => prev.filter(t => {
+        if (t.handle === handle) return false;
+        if (t.name === handle.name || t.name.startsWith(handle.name + '/') || t.name.includes('/' + handle.name + '/')) return false;
+        return true;
+      }));
+
       setRefreshTrigger(prev => prev + 1);
     } catch (e) {
       console.error('Delete failed', e);
@@ -1762,54 +1848,68 @@ function App() {
     />
   );
 
-  const renderCenter = () => (
-    <div className="center-panel-content" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div className="controls-bar" style={{ display: 'none' }}>
-        {/* Controls moved to Layout header */}
-      </div>
+  const renderCenter = () => {
+    const enableDocumentTabs = projectMetadata?.enableDocumentTabs ?? false;
 
-      {currentFile.kind === 'md' && showMetadata && (
-        <MetadataForm
-          mode={mode}
-          metadata={metadata}
-          onChange={setMetadata}
-          isNote={currentFile.name && (currentFile.name.startsWith('notes/') || currentFile.name.includes('/notes/'))}
-          isIdea={currentFile.name && (currentFile.name.startsWith('ideas/') || currentFile.name.includes('/ideas/'))}
-          notesList={notesList || []}
-          bibFiles={bibFiles || []}
-          currentFilename={currentFile.name}
-          projectMetadata={projectMetadata}
-        />
-      )}
-
-      {currentFile.kind === 'image' ? (
-        <ImageViewer src={currentFile.src} alt={currentFile.name} />
-      ) : (
-        <div className="editor-container" style={{ flex: 1, overflow: 'hidden' }}>
-          <Editor
-            key={currentFile.name || 'empty'}
-            value={content}
-            onChange={setContent}
-            mode={mode}
-            onUploadImage={onUploadImage}
-            onPasteImage={onPasteImage}
-            settings={settings}
-            projectMetadata={projectMetadata}
-            onAiThinking={setIsAiThinking}
-            onRequestImprovement={handleRequestImprovement}
-            onSelectionChange={setEditorSelection}
-            onRegisterCancel={(fn) => { cancelAiRef.current = fn; }}
-            onRegisterJumpTo={(fn) => { jumpToWordRef.current = fn; }}
-            comments={metadata?.comments || []}
-            commentTags={projectMetadata?.commentTags || DEFAULT_COMMENT_TAGS}
-            onAddComment={handleAddComment}
-            onCommentPositionsChange={setCommentPositions}
-            onEditorScrollChange={setEditorScrollTop}
-          />
+    return (
+      <div className="center-panel-content" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <div className="controls-bar" style={{ display: 'none' }}>
+          {/* Controls moved to Layout header */}
         </div>
-      )}
-    </div>
-  );
+
+        {enableDocumentTabs && openTabs.length > 0 && (
+          <DocumentTabs
+            tabs={openTabs}
+            activeTabName={currentFile.name}
+            onSelectTab={handleSelectTab}
+            onCloseTab={handleCloseTab}
+            isDirty={isDirty}
+          />
+        )}
+
+        {currentFile.kind === 'md' && showMetadata && (
+          <MetadataForm
+            mode={mode}
+            metadata={metadata}
+            onChange={setMetadata}
+            isNote={currentFile.name && (currentFile.name.startsWith('notes/') || currentFile.name.includes('/notes/'))}
+            isIdea={currentFile.name && (currentFile.name.startsWith('ideas/') || currentFile.name.includes('/ideas/'))}
+            notesList={notesList || []}
+            bibFiles={bibFiles || []}
+            currentFilename={currentFile.name}
+            projectMetadata={projectMetadata}
+          />
+        )}
+
+        {currentFile.kind === 'image' ? (
+          <ImageViewer src={currentFile.src} alt={currentFile.name} />
+        ) : (
+          <div className="editor-container" style={{ flex: 1, overflow: 'hidden' }}>
+            <Editor
+              key={currentFile.name || 'empty'}
+              value={content}
+              onChange={setContent}
+              mode={mode}
+              onUploadImage={onUploadImage}
+              onPasteImage={onPasteImage}
+              settings={settings}
+              projectMetadata={projectMetadata}
+              onAiThinking={setIsAiThinking}
+              onRequestImprovement={handleRequestImprovement}
+              onSelectionChange={setEditorSelection}
+              onRegisterCancel={(fn) => { cancelAiRef.current = fn; }}
+              onRegisterJumpTo={(fn) => { jumpToWordRef.current = fn; }}
+              comments={metadata?.comments || []}
+              commentTags={projectMetadata?.commentTags || DEFAULT_COMMENT_TAGS}
+              onAddComment={handleAddComment}
+              onCommentPositionsChange={setCommentPositions}
+              onEditorScrollChange={setEditorScrollTop}
+            />
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const handleUpdateFromPreview = useCallback((val) => {
     if (typeof val === 'function') {
@@ -1880,6 +1980,7 @@ function App() {
     content, 
     metadata, 
     currentFile, 
+    openTabs,
     saveFile, 
     isDirty, 
     handleSave, 
@@ -1892,7 +1993,9 @@ function App() {
     createSubDir,
     writeFileInDir,
     readFile,
-    handleFileSelect
+    handleFileSelect,
+    handleSelectTab,
+    handleCloseTab
   };
 
   return (

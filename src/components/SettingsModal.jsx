@@ -316,6 +316,20 @@ export function SettingsModal({ onClose, metadata, onUpdate, mode, settings, onU
                                             <span className="slider round"></span>
                                         </label>
                                     </div>
+                                    <div className="setting-row" style={{ marginTop: 16 }}>
+                                        <div className="setting-info">
+                                            <span className="setting-name">Document Tabs</span>
+                                            <span className="setting-desc">Show open document tabs ribbon above the editor</span>
+                                        </div>
+                                        <label className="switch">
+                                            <input
+                                                type="checkbox"
+                                                checked={localMeta.enableDocumentTabs ?? false}
+                                                onChange={(e) => handleChange('enableDocumentTabs', e.target.checked)}
+                                            />
+                                            <span className="slider round"></span>
+                                        </label>
+                                    </div>
                                 </div>
 
                                 {mode === 'researcher' && (

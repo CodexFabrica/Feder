@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Folder, FileText, ChevronRight, ChevronDown, Image as ImageIcon, FileJson, ExternalLink, FilePlus, FolderPlus, Edit2, Check, X, Trash2, Plus } from 'lucide-react';
 import { FiguresUploadModal } from './FiguresUploadModal';
 import { ReferencesUploadModal } from './ReferencesUploadModal';
+
+const IMAGE_REGEX = /\.(png|jpe?g|svg|gif|webp|bmp|ico|tiff?|avif)$/i;
 
 const SPECIAL_SECTIONS = [
     { key: 'notes', label: 'NOTES' },
@@ -57,6 +59,146 @@ function FileExplorerWrapper({
     const [uploadFolderHandle, setUploadFolderHandle] = useState(null);
     const [showReferencesModal, setShowReferencesModal] = useState(false);
     const [referencesFolderHandle, setReferencesFolderHandle] = useState(null);
+
+    // Figure Quick Preview state & cache
+    const previewCacheRef = useRef(new Map());
+    const hoverTimerRef = useRef(null);
+    const [previewState, setPreviewState] = useState({
+        visible: false,
+        node: null,
+        src: null,
+        loading: false,
+        position: { top: 0, left: 0 },
+        imgDimensions: null,
+        fileSize: null
+    });
+
+    // Cleanup cached object URLs on unmount
+    useEffect(() => {
+        return () => {
+            previewCacheRef.current.forEach((url) => {
+                try {
+                    URL.revokeObjectURL(url);
+                } catch (e) {}
+            });
+            previewCacheRef.current.clear();
+        };
+    }, []);
+
+    // Dismiss preview on global scroll, blur, or Escape key
+    useEffect(() => {
+        const handleDismiss = () => {
+            if (hoverTimerRef.current) {
+                clearTimeout(hoverTimerRef.current);
+                hoverTimerRef.current = null;
+            }
+            setPreviewState(prev => prev.visible ? { ...prev, visible: false, node: null, src: null } : prev);
+        };
+
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') handleDismiss();
+        };
+
+        window.addEventListener('scroll', handleDismiss, true);
+        window.addEventListener('blur', handleDismiss);
+        window.addEventListener('keydown', handleKeyDown);
+        return () => {
+            window.removeEventListener('scroll', handleDismiss, true);
+            window.removeEventListener('blur', handleDismiss);
+            window.removeEventListener('keydown', handleKeyDown);
+        };
+    }, []);
+
+    // Retrieve / cache image source URL from handle
+    const getImageSrc = useCallback(async (handle) => {
+        if (!handle) return null;
+        if (previewCacheRef.current.has(handle)) {
+            return previewCacheRef.current.get(handle);
+        }
+        try {
+            const file = await handle.getFile();
+            let url = '';
+            if (file instanceof Blob) {
+                url = URL.createObjectURL(file);
+            } else if (file && typeof file.arrayBuffer === 'function') {
+                const buffer = await file.arrayBuffer();
+                const ext = (handle.name.split('.').pop() || '').toLowerCase();
+                const mimeTypes = {
+                    png: 'image/png',
+                    jpg: 'image/jpeg',
+                    jpeg: 'image/jpeg',
+                    svg: 'image/svg+xml',
+                    gif: 'image/gif',
+                    webp: 'image/webp',
+                    bmp: 'image/bmp',
+                    ico: 'image/x-icon',
+                    avif: 'image/avif',
+                    tiff: 'image/tiff'
+                };
+                const mime = mimeTypes[ext] || 'image/png';
+                const blob = new Blob([buffer], { type: mime });
+                url = URL.createObjectURL(blob);
+            }
+            if (url) {
+                previewCacheRef.current.set(handle, url);
+            }
+            return url;
+        } catch (err) {
+            console.warn('Failed to load image for preview', err);
+            return null;
+        }
+    }, []);
+
+    const handleImageMouseEnter = useCallback((e, node) => {
+        if (hoverTimerRef.current) {
+            clearTimeout(hoverTimerRef.current);
+        }
+        const targetRect = e.currentTarget.getBoundingClientRect();
+
+        hoverTimerRef.current = setTimeout(async () => {
+            const popoverWidth = 240;
+            const popoverHeight = 180;
+            let left = targetRect.right + 10;
+            if (left + popoverWidth > window.innerWidth - 10) {
+                left = Math.max(10, targetRect.left - popoverWidth - 10);
+            }
+            let top = targetRect.top - 10;
+            if (top + popoverHeight > window.innerHeight - 10) {
+                top = Math.max(10, window.innerHeight - popoverHeight - 10);
+            }
+            if (top < 10) top = 10;
+
+            setPreviewState({
+                visible: true,
+                node,
+                src: null,
+                loading: true,
+                position: { top, left }
+            });
+
+            try {
+                const src = await getImageSrc(node.handle);
+                setPreviewState(prev => {
+                    if (!prev.visible || prev.node !== node) return prev;
+                    return {
+                        ...prev,
+                        src,
+                        loading: false
+                    };
+                });
+            } catch (err) {
+                setPreviewState(prev => prev.node === node ? { ...prev, loading: false } : prev);
+            }
+        }, 140);
+    }, [getImageSrc]);
+
+    const handleImageMouseLeave = useCallback(() => {
+        if (hoverTimerRef.current) {
+            clearTimeout(hoverTimerRef.current);
+            hoverTimerRef.current = null;
+        }
+        setPreviewState(prev => prev.visible ? { ...prev, visible: false, node: null, src: null } : prev);
+    }, []);
 
     // Sync expanded state when initial prop changes (usually on project open)
     useEffect(() => {
@@ -546,8 +688,9 @@ function FileExplorerWrapper({
                     </div>
                 );
             } else {
+                const isImage = IMAGE_REGEX.test(node.name);
                 let Icon = FileText;
-                if (node.name.match(/\.(png|jpg|jpeg|svg|gif)$/i)) Icon = ImageIcon;
+                if (isImage) Icon = ImageIcon;
                 if (node.name.endsWith('.bib')) Icon = FileJson;
 
                 const normalizedPath = path.startsWith('/') ? path.substring(1) : path;
@@ -560,11 +703,24 @@ function FileExplorerWrapper({
                         className={`file-tree-item file ${isActive ? 'active' : ''}`}
                         onClick={() => !isEditing && onFileSelect(node.handle, path)}
                         draggable
-                        onDragStart={(e) => handleDragStart(e, node, path, pathPrefix)}
+                        onDragStart={(e) => {
+                            handleImageMouseLeave();
+                            handleDragStart(e, node, path, pathPrefix);
+                        }}
                         onDragEnd={handleDragEnd}
                         onDragOver={(e) => handleDragOver(e, path, pathPrefix, false)}
                         onDragLeave={handleDragLeave}
                         onDrop={(e) => handleDrop(e, path, pathPrefix, node)}
+                        onMouseEnter={(e) => {
+                            if (isImage && !isEditing) {
+                                handleImageMouseEnter(e, node);
+                            }
+                        }}
+                        onMouseLeave={() => {
+                            if (isImage) {
+                                handleImageMouseLeave();
+                            }
+                        }}
                         style={{ position: 'relative' }}
                     >
                         {isDropTarget && dropPosition === 'before' && renderDropIndicator('before')}
@@ -744,6 +900,39 @@ function FileExplorerWrapper({
                         onRefresh?.();
                     }}
                 />
+            )}
+
+            {/* Quick Preview Pop-up on Hover for Figures/Images */}
+            {previewState.visible && (
+                <div
+                    className="figure-quick-preview-popup"
+                    style={{
+                        top: `${previewState.position.top}px`,
+                        left: `${previewState.position.left}px`
+                    }}
+                >
+                    <div className="figure-quick-preview-body">
+                        {previewState.loading && (
+                            <div className="figure-quick-preview-loading">
+                                <div className="figure-quick-preview-spinner" />
+                                <span>Loading preview...</span>
+                            </div>
+                        )}
+                        {!previewState.loading && previewState.src && (
+                            <img
+                                src={previewState.src}
+                                alt={previewState.node?.name || 'Figure preview'}
+                                className="figure-quick-preview-img"
+                            />
+                        )}
+                        {!previewState.loading && !previewState.src && (
+                            <div className="figure-quick-preview-empty">
+                                <ImageIcon size={24} />
+                                <span>Preview unavailable</span>
+                            </div>
+                        )}
+                    </div>
+                </div>
             )}
         </div>
     );
